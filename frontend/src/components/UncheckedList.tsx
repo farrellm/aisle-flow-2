@@ -1,0 +1,77 @@
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core'
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
+import {
+  restrictToParentElement,
+  restrictToVerticalAxis,
+} from '@dnd-kit/modifiers'
+import List from '@mui/material/List'
+import { setDragging } from '../api/notify'
+import { useUpdateItem } from '../api/hooks'
+import { planReorder } from '../api/reorder'
+import type { Item } from '../api/types'
+import ItemRow from './ItemRow'
+
+interface UncheckedListProps {
+  items: Item[] // already sorted by position
+  flashId: string | null
+  onToggle: (item: Item) => void
+  onDelete: (item: Item) => void
+}
+
+export default function UncheckedList({ items, flashId, onToggle, onDelete }: UncheckedListProps) {
+  const updateItem = useUpdateItem()
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  )
+
+  const handleDragEnd = ({ active, over }: DragEndEvent) => {
+    setDragging(false)
+    if (!over) return
+    const plan = planReorder(items, String(active.id), String(over.id))
+    if (!plan) return
+    updateItem.mutate({
+      id: String(active.id),
+      patch: plan.patch,
+      optimistic: { position: plan.position },
+    })
+  }
+
+  return (
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      modifiers={[restrictToVerticalAxis, restrictToParentElement]}
+      onDragStart={() => setDragging(true)}
+      onDragCancel={() => setDragging(false)}
+      onDragEnd={handleDragEnd}
+    >
+      <SortableContext items={items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
+        <List disablePadding>
+          {items.map((item) => (
+            <ItemRow
+              key={item.id}
+              item={item}
+              sortable
+              flash={item.id === flashId}
+              onToggle={onToggle}
+              onDelete={onDelete}
+            />
+          ))}
+        </List>
+      </SortableContext>
+    </DndContext>
+  )
+}

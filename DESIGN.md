@@ -131,12 +131,12 @@ List (top→bottom): Milk(1024) Bread(2048) Eggs(3072) Jam(4096).
 ```
 ┌──────────────────────┐      JSON /api/*       ┌───────────────────┐      SQL (pgx)      ┌───────────────────┐
 │  React SPA           │ ─────────────────────▶ │  Go HTTP server   │ ──────────────────▶ │  PostgreSQL 16    │
-│  Vite + TS + MUI     │ ◀───────────────────── │  net/http, :8080  │ ◀────────────────── │  Docker container │
+│  Vite + TS + MUI     │ ◀───────────────────── │  net/http, :8081  │ ◀────────────────── │  Docker container │
 │  TanStack Query      │   poll every ~4 s       │                   │                     │  named volume     │
 └──────────────────────┘                         └───────────────────┘                     └───────────────────┘
 ```
 
-- **Development:** Vite dev server on `:5173` proxies `/api` to the Go server on `:8080` (no CORS needed). Postgres runs via `docker compose`, managed by `make`.
+- **Development:** Vite dev server on `:5174` proxies `/api` to the Go server on `:8081` (no CORS needed). Postgres runs via `docker compose`, managed by `make`.
 - **Production (simple deployment):** `vite build` output is embedded in the Go binary with `embed.FS` and served by the same server that serves `/api` — one binary + one Postgres container. (SPA fallback: unknown non-`/api` paths serve `index.html`.)
 - Concurrency model: last-write-wins on all mutations. No locking or versioning — acceptable at household scale, and the polling loop reconciles clients within seconds.
 
@@ -290,7 +290,7 @@ backend/
 ### Key decisions
 
 - **Position logic lives in `store`**, executed inside transactions: `Update` with a reorder reads the neighbors' positions `FOR UPDATE`, computes the midpoint, renormalizes if the gap is exhausted, and writes — atomically. Handlers never touch position math.
-- **Config via env vars:** `DATABASE_URL` (default `postgres://aisleflow:aisleflow@localhost:5432/aisleflow?sslmode=disable`), `PORT` (default `8080`). No config files.
+- **Config via env vars:** `DATABASE_URL` (default `postgres://aisleflow:aisleflow@localhost:5432/aisleflow?sslmode=disable`), `PORT` (default `8081`). No config files.
 - **Logging:** `log/slog` JSON handler; one line per request (method, path, status, duration).
 - **Graceful shutdown:** trap SIGINT/SIGTERM, `server.Shutdown(ctx)`, close the pool.
 - **Migrations are not run by the server**; they're an explicit `make db-migrate` step (§9). The server fails fast on startup if the schema is missing (health check query).
