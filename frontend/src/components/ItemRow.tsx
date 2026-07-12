@@ -1,0 +1,140 @@
+import { useEffect, useRef } from 'react'
+import { useSortable } from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
+import Box from '@mui/material/Box'
+import Checkbox from '@mui/material/Checkbox'
+import ListItem from '@mui/material/ListItem'
+import ListItemText from '@mui/material/ListItemText'
+import DeleteIcon from '@mui/icons-material/Delete'
+import DragIndicatorIcon from '@mui/icons-material/DragIndicator'
+import type { Item } from '../api/types'
+import { useSwipeToDelete } from './useSwipeToDelete'
+
+interface ItemRowProps {
+  item: Item
+  // Sortable rows (unchecked section) get a drag handle.
+  sortable: boolean
+  flash: boolean
+  onToggle: (item: Item) => void
+  onDelete: (item: Item) => void
+}
+
+export default function ItemRow({ item, sortable, flash, onToggle, onDelete }: ItemRowProps) {
+  const swipe = useSwipeToDelete(() => onDelete(item))
+  const rowRef = useRef<HTMLLIElement>(null)
+
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: item.id, disabled: !sortable || swipe.swiping })
+
+  useEffect(() => {
+    if (flash) {
+      rowRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    }
+  }, [flash])
+
+  return (
+    <ListItem
+      ref={(node: HTMLLIElement | null) => {
+        rowRef.current = node
+        setNodeRef(node)
+      }}
+      disablePadding
+      data-testid={`item-row-${item.name}`}
+      onKeyDown={(e) => {
+        // Keyboard fallback for swipe-to-delete.
+        if ((e.key === 'Delete' || e.key === 'Backspace') && e.target === e.currentTarget) {
+          onDelete(item)
+        }
+      }}
+      tabIndex={0}
+      sx={{
+        position: 'relative',
+        overflow: 'hidden',
+        transform: CSS.Transform.toString(transform),
+        transition,
+        zIndex: isDragging ? 1 : undefined,
+        opacity: isDragging ? 0.85 : 1,
+        touchAction: 'pan-y',
+        '@keyframes rowFlash': {
+          '0%': { backgroundColor: 'transparent' },
+          '25%': { backgroundColor: 'rgba(255, 193, 7, 0.35)' },
+          '100%': { backgroundColor: 'transparent' },
+        },
+      }}
+    >
+      {/* Red delete backdrop revealed as the row slides left */}
+      <Box
+        aria-hidden
+        sx={{
+          position: 'absolute',
+          inset: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'flex-end',
+          pr: 2,
+          bgcolor: 'error.main',
+          color: 'error.contrastText',
+          opacity: swipe.dx < 0 ? 1 : 0,
+        }}
+      >
+        <DeleteIcon />
+      </Box>
+
+      {/* Sliding row content */}
+      <Box
+        {...swipe.handlers}
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          width: '100%',
+          minHeight: 48,
+          px: 1,
+          bgcolor: 'background.paper',
+          transform: `translateX(${swipe.dx}px)`,
+          transition: swipe.swiping ? 'none' : 'transform 200ms ease',
+          animation: flash ? 'rowFlash 2s ease' : undefined,
+          cursor: 'default',
+        }}
+      >
+        {sortable && (
+          <Box
+            {...attributes}
+            {...listeners}
+            aria-label={`Reorder ${item.name}`}
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              color: 'text.disabled',
+              cursor: 'grab',
+              touchAction: 'none',
+              mr: 0.5,
+            }}
+          >
+            <DragIndicatorIcon fontSize="small" />
+          </Box>
+        )}
+        <Checkbox
+          edge={sortable ? false : 'start'}
+          checked={item.checked}
+          onChange={() => onToggle(item)}
+          slotProps={{ input: { 'aria-label': item.name } }}
+          sx={{ ml: sortable ? 0 : 1 }}
+        />
+        <ListItemText
+          primary={item.name}
+          sx={
+            item.checked
+              ? { textDecoration: 'line-through', color: 'text.secondary' }
+              : undefined
+          }
+        />
+      </Box>
+    </ListItem>
+  )
+}
