@@ -1,4 +1,33 @@
 import '@testing-library/jest-dom/vitest'
+import { afterEach } from 'vitest'
+import { onlineManager } from '@tanstack/react-query'
+
+// Node's experimental localStorage global shadows jsdom's and is undefined
+// without --localstorage-file; the persister needs a working Storage, so
+// install an in-memory one.
+if (!window.localStorage) {
+  const store = new Map<string, string>()
+  Object.defineProperty(window, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, String(v)),
+      removeItem: (k: string) => void store.delete(k),
+      clear: () => store.clear(),
+      key: (i: number) => [...store.keys()][i] ?? null,
+      get length() {
+        return store.size
+      },
+    } satisfies Storage,
+  })
+}
+
+// The persister writes the query cache + mutation queue to localStorage;
+// clear it (and any simulated offline state) so tests stay isolated.
+afterEach(() => {
+  window.localStorage.clear()
+  onlineManager.setOnline(true)
+})
 
 // jsdom gaps: pointer capture, scrollIntoView, PointerEvent, matchMedia.
 Element.prototype.setPointerCapture ??= () => {}

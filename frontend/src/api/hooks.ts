@@ -5,11 +5,11 @@ import {
   type QueryClient,
 } from '@tanstack/react-query'
 import { api } from './client'
-import { isDragging, notifyAppError } from './notify'
-import { maxPosition } from './sort'
-import type { Item, UpdatePatch } from './types'
+import { isDragging } from './notify'
+import { ITEMS_KEY, type AddVars, type UpdateVars } from './queryClient'
+import type { Item } from './types'
 
-const ITEMS_KEY = ['items'] as const
+export type { UpdateVars } from './queryClient'
 
 export function useItems() {
   const client = useQueryClient()
@@ -22,90 +22,33 @@ export function useItems() {
   })
 }
 
-// Shared optimistic-update plumbing (§7): cancel in-flight queries, patch the
-// cache, roll back on error + Snackbar, invalidate on settle to reconcile
-// with the server (picking up the server-computed position).
-function useOptimisticMutation<TVars, TData>(opts: {
-  mutationFn: (vars: TVars) => Promise<TData>
-  patch: (items: Item[], vars: TVars) => Item[]
-  onSuccess?: (data: TData, vars: TVars) => void
-}) {
-  const client = useQueryClient()
-  return useMutation({
-    mutationFn: opts.mutationFn,
-    onMutate: async (vars: TVars) => {
-      await client.cancelQueries({ queryKey: ITEMS_KEY })
-      const previous = client.getQueryData<Item[]>(ITEMS_KEY)
-      client.setQueryData<Item[]>(ITEMS_KEY, (items = []) =>
-        opts.patch(items, vars),
-      )
-      return { previous }
-    },
-    onSuccess: opts.onSuccess,
-    onError: (err, _vars, context) => {
-      if (context?.previous) client.setQueryData(ITEMS_KEY, context.previous)
-      notifyAppError(err.message)
-    },
-    onSettled: () => client.invalidateQueries({ queryKey: ITEMS_KEY }),
-  })
-}
+// The mutation hooks bind by key only: mutationFns and the optimistic
+// cache plumbing live in the defaults registered by createAppQueryClient,
+// so mutations queued offline can be dehydrated and resumed after a reload.
 
 export function useAddItem() {
-  return useOptimisticMutation({
-    mutationFn: (name: string) => api.addItem(name),
-    patch: (items, name) => {
-      const existing = items.find(
-        (i) => i.name.localeCompare(name, undefined, { sensitivity: 'base' }) === 0,
-      )
-      if (existing) {
-        // Revive: the server unchecks it; mirror that optimistically.
-        return items.map((i) =>
-          i.id === existing.id ? { ...i, checked: false } : i,
-        )
-      }
-      const now = new Date().toISOString()
-      return [
-        ...items,
-        {
-          id: `optimistic-${Date.now()}`,
-          name,
-          checked: false,
-          position: maxPosition(items) + 1024,
-          createdAt: now,
-          updatedAt: now,
-        },
-      ]
-    },
+  const m = useMutation<{ item: Item; revived: boolean }, Error, AddVars>({
+    mutationKey: ['addItem'],
   })
-}
-
-export interface UpdateVars {
-  id: string
-  patch: UpdatePatch
-  // Optimistic view of the change; for reorders this carries the locally
-  // computed midpoint position until the server's value arrives.
-  optimistic: Partial<Item>
+  return {
+    ...m,
+    mutate: (name: string) => m.mutate({ id: crypto.randomUUID(), name }),
+  }
 }
 
 export function useUpdateItem() {
-  return useOptimisticMutation({
-    mutationFn: ({ id, patch }: UpdateVars) => api.updateItem(id, patch),
-    patch: (items, { id, optimistic }) =>
-      items.map((i) => (i.id === id ? { ...i, ...optimistic } : i)),
+  return useMutation<{ item: Item }, Error, UpdateVars>({
+    mutationKey: ['updateItem'],
   })
 }
 
 export function useDeleteItem() {
-  return useOptimisticMutation({
-    mutationFn: (id: string) => api.deleteItem(id),
-    patch: (items, id) => items.filter((i) => i.id !== id),
-  })
+  return useMutation<void, Error, string>({ mutationKey: ['deleteItem'] })
 }
 
 export function useClearChecked() {
-  return useOptimisticMutation({
-    mutationFn: (_vars: void) => api.clearChecked(),
-    patch: (items) => items.filter((i) => !i.checked),
+  return useMutation<{ deleted: number }, Error, void>({
+    mutationKey: ['clearChecked'],
   })
 }
 

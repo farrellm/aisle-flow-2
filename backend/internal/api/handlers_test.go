@@ -106,6 +106,45 @@ func TestItemLifecycle(t *testing.T) {
 	}
 }
 
+func TestCreateWithClientID(t *testing.T) {
+	srv := newServer(t)
+	clientID := "5f0c9a2e-4b7d-4c3a-9e1f-2a6b8d4c7e10"
+
+	res, body := do(t, "POST", srv.URL+"/api/items",
+		map[string]string{"id": clientID, "name": "Milk"})
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("create status = %d, want 201", res.StatusCode)
+	}
+	if got := body["item"].(map[string]any)["id"]; got != clientID {
+		t.Fatalf("id = %v, want the client-supplied %v", got, clientID)
+	}
+
+	// Offline replay of the same create: existing row wins, same id.
+	res, body = do(t, "POST", srv.URL+"/api/items",
+		map[string]string{"id": clientID, "name": "Milk"})
+	if res.StatusCode != http.StatusOK || body["revived"] != false {
+		t.Fatalf("replay: status=%d revived=%v, want 200/false", res.StatusCode, body["revived"])
+	}
+	if got := body["item"].(map[string]any)["id"]; got != clientID {
+		t.Fatalf("replay id = %v, want %v", got, clientID)
+	}
+
+	// Same id, different name → conflict, not a 500.
+	res, body = do(t, "POST", srv.URL+"/api/items",
+		map[string]string{"id": clientID, "name": "Bread"})
+	if res.StatusCode != http.StatusConflict {
+		t.Fatalf("id collision status = %d, want 409", res.StatusCode)
+	}
+	assertErrorEnvelope(t, body, "conflict")
+
+	res, body = do(t, "POST", srv.URL+"/api/items",
+		map[string]string{"id": "not-a-uuid", "name": "Eggs"})
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("bad id status = %d, want 400", res.StatusCode)
+	}
+	assertErrorEnvelope(t, body, "bad_request")
+}
+
 func TestErrorResponses(t *testing.T) {
 	srv := newServer(t)
 

@@ -25,6 +25,7 @@ func (h *handlers) listItems(w http.ResponseWriter, r *http.Request) {
 
 func (h *handlers) createItem(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		ID   string `json:"id"`
 		Name string `json:"name"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -36,8 +37,18 @@ func (h *handlers) createItem(w http.ResponseWriter, r *http.Request) {
 		invalid(w, "name must not be blank")
 		return
 	}
+	// Offline clients supply their own id so mutations queued behind the
+	// create can reference the item before the response arrives.
+	var id *string
+	if req.ID != "" {
+		if _, err := uuid.Parse(req.ID); err != nil {
+			badRequest(w, "invalid item id")
+			return
+		}
+		id = &req.ID
+	}
 
-	item, created, revived, err := h.store.CreateOrRevive(r.Context(), name)
+	item, created, revived, err := h.store.CreateOrRevive(r.Context(), name, id)
 	if err != nil {
 		writeStoreError(w, err)
 		return

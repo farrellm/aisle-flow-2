@@ -5,8 +5,10 @@ import CssBaseline from '@mui/material/CssBaseline'
 import Snackbar from '@mui/material/Snackbar'
 import { ThemeProvider } from '@mui/material/styles'
 import useMediaQuery from '@mui/material/useMediaQuery'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { createSyncStoragePersister } from '@tanstack/query-sync-storage-persister'
+import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client'
 import { onAppError } from './api/notify'
+import { createAppQueryClient, ITEMS_KEY } from './api/queryClient'
 import { buildTheme } from './theme'
 import AddItemBar from './components/AddItemBar'
 import ShoppingList from './components/ShoppingList'
@@ -51,14 +53,37 @@ function AppContent() {
 export default function App() {
   const prefersDark = useMediaQuery('(prefers-color-scheme: dark)')
   const theme = useMemo(() => buildTheme(prefersDark), [prefersDark])
-  const [queryClient] = useState(() => new QueryClient())
+  const [queryClient] = useState(createAppQueryClient)
+  // Persisting the query cache + paused mutations makes the last-known list
+  // render offline and lets the offline mutation queue survive a reload.
+  const [persister] = useState(() =>
+    createSyncStoragePersister({
+      storage: window.localStorage,
+      key: 'aisleflow-cache',
+      // Default 1s throttle risks losing a just-queued mutation if the
+      // tab closes right after a tap; the state is tiny, write sooner.
+      throttleTime: 250,
+    }),
+  )
 
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      <QueryClientProvider client={queryClient}>
+      <PersistQueryClientProvider
+        client={queryClient}
+        persistOptions={{
+          persister,
+          maxAge: 7 * 24 * 60 * 60 * 1000,
+          buster: 'v1',
+        }}
+        onSuccess={() =>
+          queryClient
+            .resumePausedMutations()
+            .then(() => queryClient.invalidateQueries({ queryKey: ITEMS_KEY }))
+        }
+      >
         <AppContent />
-      </QueryClientProvider>
+      </PersistQueryClientProvider>
     </ThemeProvider>
   )
 }

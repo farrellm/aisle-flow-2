@@ -37,15 +37,17 @@ func (s *Store) List(ctx context.Context) ([]Item, error) {
 // CreateOrRevive implements the POST semantics (§6): insert a new item at the
 // bottom of the list; if the name already exists and is checked, uncheck it
 // (revived=true); if it exists unchecked, no-op. All in one transaction so
-// concurrent adds of the same name converge to one row.
-func (s *Store) CreateOrRevive(ctx context.Context, name string) (item Item, created, revived bool, err error) {
+// concurrent adds of the same name converge to one row. A nil id lets the
+// database generate one; offline clients pass their own uuid.
+func (s *Store) CreateOrRevive(ctx context.Context, name string, id *string) (item Item, created, revived bool, err error) {
 	err = pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		// New item: max(position) over ALL items + 1024 (§3).
 		row := tx.QueryRow(ctx, `
-			INSERT INTO items (name, position)
-			VALUES ($1, (SELECT COALESCE(MAX(position), 0) + $2 FROM items))
+			INSERT INTO items (id, name, position)
+			VALUES (COALESCE($3::uuid, gen_random_uuid()), $1,
+			        (SELECT COALESCE(MAX(position), 0) + $2 FROM items))
 			ON CONFLICT (name) DO NOTHING
-			RETURNING `+itemColumns, name, float64(positionGap))
+			RETURNING `+itemColumns, name, float64(positionGap), id)
 		item, err = scanItem(row)
 		if err == nil {
 			created = true
@@ -76,6 +78,11 @@ func (s *Store) CreateOrRevive(ctx context.Context, name string) (item Item, cre
 		}
 		return err
 	})
+	if isUniqueViolation(err) {
+		// A client-supplied id colliding with an existing row under a
+		// different name escapes ON CONFLICT (name) as a PK violation.
+		return Item{}, false, false, ErrNameConflict
+	}
 	return item, created, revived, err
 }
 
