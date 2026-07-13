@@ -4,3 +4,4 @@ backend/internal/webui/dist/
 backend/server
 *.log
 .DS_Store
+.playwright-mcp/
