@@ -102,29 +102,29 @@ export default function ItemRow({ item, sortable, flash, onToggle, onDelete }: I
           cursor: 'default',
         }}
       >
-        {sortable && (
-          <Box
-            {...attributes}
-            {...listeners}
-            aria-label={`Reorder ${item.name}`}
-            sx={{
-              display: 'flex',
-              alignItems: 'center',
-              color: 'text.disabled',
-              cursor: 'grab',
-              touchAction: 'none',
-              mr: 0.5,
-            }}
-          >
-            <DragIndicatorIcon fontSize="small" />
-          </Box>
-        )}
+        {/* Always occupies the handle column so checkboxes line up across both sections. */}
+        <Box
+          {...(sortable ? attributes : {})}
+          {...(sortable ? listeners : {})}
+          aria-label={sortable ? `Reorder ${item.name}` : undefined}
+          aria-hidden={sortable ? undefined : true}
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            color: 'text.disabled',
+            cursor: sortable ? 'grab' : 'default',
+            touchAction: 'none',
+            mr: 0.5,
+            width: 20,
+            flexShrink: 0,
+          }}
+        >
+          {sortable && <DragIndicatorIcon fontSize="small" />}
+        </Box>
         <Checkbox
-          edge={sortable ? false : 'start'}
           checked={item.checked}
           onChange={() => onToggle(item)}
           slotProps={{ input: { 'aria-label': item.name } }}
-          sx={{ ml: sortable ? 0 : 1 }}
         />
         <ListItemText
           primary={item.name}
