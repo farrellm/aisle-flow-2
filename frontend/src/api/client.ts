@@ -34,10 +34,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   listItems: () => request<{ items: Item[] }>('/api/items'),
-  addItem: (name: string) =>
+  // The client supplies the id so mutations queued offline behind the
+  // create can reference the item before the response arrives.
+  addItem: (name: string, id?: string) =>
     request<{ item: Item; revived: boolean }>('/api/items', {
       method: 'POST',
-      body: JSON.stringify({ name }),
+      body: JSON.stringify(id ? { id, name } : { name }),
     }),
   updateItem: (id: string, patch: UpdatePatch) =>
     request<{ item: Item }>(`/api/items/${id}`, {
