@@ -105,7 +105,29 @@ describe('AisleFlow', () => {
     expect(screen.getByText('Bread')).toBeInTheDocument()
   })
 
-  it('does not delete when the swipe falls short of the threshold', async () => {
+  it('does not delete or reveal when the swipe falls short of the snap threshold', async () => {
+    resetDb([makeItem({ name: 'Milk' })])
+    render(<App />)
+    const row = await screen.findByTestId('item-row-Milk')
+    const content = within(row).getByText('Milk').closest('div')!.parentElement!
+
+    vi.spyOn(content, 'getBoundingClientRect').mockReturnValue({
+      width: 300, height: 48, top: 0, left: 0, right: 300, bottom: 48, x: 0, y: 0,
+      toJSON: () => ({}),
+    } as DOMRect)
+
+    const { fireEvent } = await import('@testing-library/react')
+    fireEvent.pointerDown(content, { pointerId: 1, clientX: 250, clientY: 20, button: 0 })
+    fireEvent.pointerMove(content, { pointerId: 1, clientX: 230, clientY: 20 })
+    fireEvent.pointerUp(content, { pointerId: 1, clientX: 230, clientY: 20 })
+
+    expect(screen.getByText('Milk')).toBeInTheDocument()
+    expect(db.requests.some((r) => r.startsWith('DELETE'))).toBe(false)
+    // Hidden from the accessibility tree while the row is closed.
+    expect(screen.queryByRole('button', { name: 'Delete Milk' })).not.toBeInTheDocument()
+  })
+
+  it('snaps open to reveal a delete button on a short swipe', async () => {
     resetDb([makeItem({ name: 'Milk' })])
     render(<App />)
     const row = await screen.findByTestId('item-row-Milk')
@@ -121,7 +143,43 @@ describe('AisleFlow', () => {
     fireEvent.pointerMove(content, { pointerId: 1, clientX: 200, clientY: 20 })
     fireEvent.pointerUp(content, { pointerId: 1, clientX: 200, clientY: 20 })
 
+    // Below the commit threshold: the row stays, the Delete button is exposed.
     expect(screen.getByText('Milk')).toBeInTheDocument()
+    expect(db.requests.some((r) => r.startsWith('DELETE'))).toBe(false)
+    const deleteButton = screen.getByRole('button', { name: 'Delete Milk' })
+    expect(deleteButton).toBeVisible()
+
+    fireEvent.click(deleteButton)
+    await waitFor(() =>
+      expect(db.requests.some((r) => r.startsWith('DELETE'))).toBe(true),
+    )
+    await waitFor(() => expect(screen.queryByText('Milk')).not.toBeInTheDocument())
+  })
+
+  it('closes a revealed row when the row content is tapped', async () => {
+    resetDb([makeItem({ name: 'Milk' })])
+    render(<App />)
+    const row = await screen.findByTestId('item-row-Milk')
+    const content = within(row).getByText('Milk').closest('div')!.parentElement!
+
+    vi.spyOn(content, 'getBoundingClientRect').mockReturnValue({
+      width: 300, height: 48, top: 0, left: 0, right: 300, bottom: 48, x: 0, y: 0,
+      toJSON: () => ({}),
+    } as DOMRect)
+
+    const { fireEvent } = await import('@testing-library/react')
+    fireEvent.pointerDown(content, { pointerId: 1, clientX: 250, clientY: 20, button: 0 })
+    fireEvent.pointerMove(content, { pointerId: 1, clientX: 200, clientY: 20 })
+    fireEvent.pointerUp(content, { pointerId: 1, clientX: 200, clientY: 20 })
+    expect(screen.getByRole('button', { name: 'Delete Milk' })).toBeVisible()
+
+    // A plain tap on the content closes the row without toggling the checkbox.
+    fireEvent.pointerDown(content, { pointerId: 2, clientX: 100, clientY: 20, button: 0 })
+    fireEvent.pointerUp(content, { pointerId: 2, clientX: 100, clientY: 20 })
+    fireEvent.click(content, { detail: 1 })
+
+    expect(screen.queryByRole('button', { name: 'Delete Milk' })).not.toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: 'Milk' })).not.toBeChecked()
     expect(db.requests.some((r) => r.startsWith('DELETE'))).toBe(false)
   })
 })

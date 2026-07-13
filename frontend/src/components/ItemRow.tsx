@@ -2,13 +2,14 @@ import { useEffect, useRef } from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import Box from '@mui/material/Box'
+import ButtonBase from '@mui/material/ButtonBase'
 import Checkbox from '@mui/material/Checkbox'
 import ListItem from '@mui/material/ListItem'
 import ListItemText from '@mui/material/ListItemText'
 import DeleteIcon from '@mui/icons-material/Delete'
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator'
 import type { Item } from '../api/types'
-import { useSwipeToDelete } from './useSwipeToDelete'
+import { REVEAL_WIDTH_PX, useSwipeToDelete } from './useSwipeToDelete'
 
 interface ItemRowProps {
   item: Item
@@ -30,7 +31,10 @@ export default function ItemRow({ item, sortable, flash, onToggle, onDelete }: I
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: item.id, disabled: !sortable || swipe.swiping })
+  } = useSortable({
+    id: item.id,
+    disabled: !sortable || swipe.swiping || swipe.revealed,
+  })
 
   useEffect(() => {
     if (flash) {
@@ -68,22 +72,28 @@ export default function ItemRow({ item, sortable, flash, onToggle, onDelete }: I
         },
       }}
     >
-      {/* Red delete backdrop revealed as the row slides left */}
+      {/* Red delete backdrop revealed as the row slides left. visibility
+          (not opacity) keeps the hidden button out of hit-testing and the
+          accessibility tree while the row is closed. */}
       <Box
-        aria-hidden
         sx={{
           position: 'absolute',
           inset: 0,
           display: 'flex',
-          alignItems: 'center',
+          alignItems: 'stretch',
           justifyContent: 'flex-end',
-          pr: 2,
           bgcolor: 'error.main',
           color: 'error.contrastText',
-          opacity: swipe.dx < 0 ? 1 : 0,
+          visibility: swipe.dx < 0 ? 'visible' : 'hidden',
         }}
       >
-        <DeleteIcon />
+        <ButtonBase
+          aria-label={`Delete ${item.name}`}
+          onClick={() => onDelete(item)}
+          sx={{ width: REVEAL_WIDTH_PX }}
+        >
+          <DeleteIcon />
+        </ButtonBase>
       </Box>
 
       {/* Sliding row content */}
