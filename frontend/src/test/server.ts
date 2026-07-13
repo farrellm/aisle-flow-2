@@ -34,9 +34,9 @@ export const server = setupServer(
     return HttpResponse.json({ items: db.items })
   }),
   http.post('/api/items', async ({ request }) => {
-    const { name } = (await request.json()) as { name: string }
+    const { id, name } = (await request.json()) as { id?: string; name: string }
     db.requests.push(`POST ${name}`)
-    const item = makeItem({ name })
+    const item = makeItem({ name, ...(id && { id }) })
     db.items = [...db.items, item]
     return HttpResponse.json({ item, revived: false }, { status: 201 })
   }),
@@ -58,5 +58,17 @@ export const server = setupServer(
     db.requests.push(`DELETE ${params.id}`)
     db.items = db.items.filter((i) => i.id !== params.id)
     return new HttpResponse(null, { status: 204 })
+  }),
+  http.delete('/api/items', ({ request }) => {
+    if (new URL(request.url).searchParams.get('checked') !== 'true') {
+      return HttpResponse.json(
+        { error: { code: 'bad_request', message: 'requires ?checked=true' } },
+        { status: 400 },
+      )
+    }
+    db.requests.push('DELETE checked')
+    const deleted = db.items.filter((i) => i.checked).length
+    db.items = db.items.filter((i) => !i.checked)
+    return HttpResponse.json({ deleted })
   }),
 )
