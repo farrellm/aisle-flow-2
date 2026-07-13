@@ -3,7 +3,7 @@ export AISLEFLOW_DB_PORT
 DATABASE_URL ?= postgres://aisleflow:aisleflow@localhost:$(AISLEFLOW_DB_PORT)/aisleflow?sslmode=disable
 export DATABASE_URL
 
-.PHONY: db-create db-start db-migrate db-stop db-destroy backend frontend dev test build
+.PHONY: db-create db-start db-migrate db-stop db-destroy backend backend-watch frontend dev test build
 
 db-create:
 	docker compose up -d --wait db
@@ -23,6 +23,10 @@ db-destroy:
 
 backend:
 	cd backend && go run ./cmd/server
+
+# Live-reload: wgo reruns `go run` whenever a .go file under backend/ changes.
+backend-watch:
+	cd backend && wgo run ./cmd/server
 
 frontend:
 	cd frontend && npm run dev
