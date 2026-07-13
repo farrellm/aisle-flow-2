@@ -16,7 +16,7 @@ func newStore(t *testing.T) *store.Store {
 
 func mustAdd(t *testing.T, s *store.Store, name string) store.Item {
 	t.Helper()
-	item, _, _, err := s.CreateOrRevive(context.Background(), name)
+	item, _, _, err := s.CreateOrRevive(context.Background(), name, nil)
 	if err != nil {
 		t.Fatalf("add %q: %v", name, err)
 	}
@@ -67,7 +67,7 @@ func TestCreateOrRevive(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
 
-	milk, created, revived, err := s.CreateOrRevive(ctx, "Milk")
+	milk, created, revived, err := s.CreateOrRevive(ctx, "Milk", nil)
 	if err != nil || !created || revived {
 		t.Fatalf("first add: created=%v revived=%v err=%v", created, revived, err)
 	}
@@ -81,7 +81,7 @@ func TestCreateOrRevive(t *testing.T) {
 	}
 
 	// Existing and unchecked: no-op, case-insensitive (citext).
-	again, created, revived, err := s.CreateOrRevive(ctx, "milk")
+	again, created, revived, err := s.CreateOrRevive(ctx, "milk", nil)
 	if err != nil || created || revived {
 		t.Fatalf("dup add: created=%v revived=%v err=%v", created, revived, err)
 	}
@@ -91,7 +91,7 @@ func TestCreateOrRevive(t *testing.T) {
 
 	// Existing and checked: revived (unchecked), position preserved.
 	setChecked(t, s, milk.ID, true)
-	rev, created, revived, err := s.CreateOrRevive(ctx, "MILK")
+	rev, created, revived, err := s.CreateOrRevive(ctx, "MILK", nil)
 	if err != nil || created || !revived {
 		t.Fatalf("revive: created=%v revived=%v err=%v", created, revived, err)
 	}
@@ -249,7 +249,7 @@ func TestConcurrentAdd(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			_, _, _, errs[i] = s.CreateOrRevive(ctx, "Milk")
+			_, _, _, errs[i] = s.CreateOrRevive(ctx, "Milk", nil)
 		}(i)
 	}
 	wg.Wait()
