@@ -18,13 +18,13 @@ A single shared shopping list as a web app. Material Design UI. Unchecked items 
 - **Order preservation:** checking an item and later unchecking it returns it to its previous position among the unchecked items.
 - Changes propagate across open tabs/devices via polling (a few seconds of latency is acceptable).
 - Material Design look and feel throughout.
+- **Offline-tolerant** (grocery stores have bad reception): the app installs as a PWA, renders the last-known list without a connection, and queues mutations made offline for replay on reconnect (§13).
 
 ### Non-goals
 
 - Authentication or user accounts — the app is open (intended for home-network or personal deployment).
 - Multiple lists.
 - Real-time push (WebSockets/SSE).
-- Offline support / PWA.
 - Item metadata beyond a name (no quantities, categories, notes, or images).
 
 These are all listed as [future extensions](#12-future-extensions); the design deliberately leaves room for them without requiring them now.
@@ -137,8 +137,8 @@ List (top→bottom): Milk(1024) Bread(2048) Eggs(3072) Jam(4096).
 ```
 
 - **Development:** Vite dev server on `:5174` proxies `/api` to the Go server on `:8081` (no CORS needed). Postgres runs via `docker compose`, managed by `make`.
-- **Production (simple deployment):** `vite build` output is embedded in the Go binary with `embed.FS` and served by the same server that serves `/api` — one binary + one Postgres container. (SPA fallback: unknown non-`/api` paths serve `index.html`.)
-- Concurrency model: last-write-wins on all mutations. No locking or versioning — acceptable at household scale, and the polling loop reconciles clients within seconds.
+- **Production (simple deployment):** `vite build` output is embedded in the Go binary with `embed.FS` and served by the same server that serves `/api` — one binary + one Postgres container. (SPA fallback: unknown non-`/api` paths serve `index.html`.) Hashed `assets/` are served `Cache-Control: immutable`; everything else (`index.html`, `sw.js`, manifest) is `no-cache` so service-worker updates roll out on the next visit.
+- Concurrency model: last-write-wins on all mutations. No locking or versioning — acceptable at household scale, and the polling loop reconciles clients within seconds. The same property is what makes offline replay safe enough (§13).
 
 ---
 
@@ -198,7 +198,7 @@ interface Item {
 | Method & path | Body | Success | Purpose |
 |---|---|---|---|
 | `GET /api/items` | — | `200` `{ "items": Item[] }` | Full list. Server returns display order: unchecked by `position, created_at, id`, then checked by `name`. |
-| `POST /api/items` | `{ "name": string }` | `201` `{ "item": Item, "revived": false }` — created<br>`200` `{ "item": Item, "revived": true }` — existing checked item was unchecked<br>`200` `{ "item": Item, "revived": false }` — already unchecked, no-op | Create-or-revive. Name is trimmed server-side; blank → `422`. |
+| `POST /api/items` | `{ "name": string, "id"?: uuid }` | `201` `{ "item": Item, "revived": false }` — created<br>`200` `{ "item": Item, "revived": true }` — existing checked item was unchecked<br>`200` `{ "item": Item, "revived": false }` — already unchecked, no-op | Create-or-revive. Name is trimmed server-side; blank → `422`. The optional `id` lets offline clients generate the uuid themselves so queued follow-up mutations can reference the item before the response arrives (§13); an `id` colliding with a different name → `409`. |
 | `PATCH /api/items/{id}` | any subset of:<br>`{ "name": string }`<br>`{ "checked": boolean }`<br>`{ "before": id \| null, "after": id \| null }` | `200` `{ "item": Item }` | Rename, check/uncheck, and/or reorder. `before`/`after` name the unchecked neighbors at the drop location (`null` = edge of the unchecked section); the **server** computes the new `position` (§3). |
 | `DELETE /api/items/{id}` | — | `204` | Delete one item. |
 | `DELETE /api/items?checked=true` | — | `200` `{ "deleted": number }` | Clear all checked items. Without the query param → `400` (guards against wiping the list). |
@@ -230,6 +230,7 @@ Race notes: `POST` uses `INSERT … ON CONFLICT (name)` + follow-up logic in one
 - **MUI (@mui/material, @mui/icons-material)** — Material Design components and theming
 - **@dnd-kit/core + @dnd-kit/sortable** — drag and drop (actively maintained, works with MUI, keyboard-accessible)
 - **TanStack Query (@tanstack/react-query)** — server state, polling, optimistic updates
+- **vite-plugin-pwa + @tanstack/react-query-persist-client** — service worker, cache/queue persistence (§13)
 - No Redux/Zustand: the only client-only state is the add-input text, a "dragging" flag, and dialog visibility — plain `useState` suffices. Everything else is server state owned by TanStack Query.
 
 ### Component tree
@@ -248,8 +249,8 @@ Race notes: `POST` uses `INSERT … ON CONFLICT (name)` + follow-up logic in one
 
 ### Data layer (`src/api/`)
 
-- `useItems()` — `useQuery({ queryKey: ['items'], refetchInterval: 4000, refetchOnWindowFocus: true })`. Polling is **paused while a drag is in progress or a mutation is in flight** (`refetchInterval` callback form) so a refetch can't yank rows mid-drag.
-- Mutations (`useAddItem`, `useUpdateItem`, `useDeleteItem`, `useClearChecked`) all follow the standard TanStack optimistic pattern: `onMutate` cancels in-flight queries and patches the `['items']` cache; `onError` restores the snapshot and shows a Snackbar; `onSettled` invalidates to reconcile with the server (picking up the server-computed `position`).
+- `useItems()` — `useQuery({ queryKey: ['items'], refetchInterval: 4000, refetchOnWindowFocus: true })`. Polling is **paused while a drag is in progress or a mutation is in flight or queued** (`refetchInterval` callback form) so a refetch can't yank rows mid-drag.
+- Mutations (`useAddItem`, `useUpdateItem`, `useDeleteItem`, `useClearChecked`) all follow the standard TanStack optimistic pattern: `onMutate` cancels in-flight queries and patches the `['items']` cache; `onError` restores the snapshot and shows a Snackbar; `onSettled` invalidates to reconcile with the server (picking up the server-computed `position`). The mutation functions and this optimistic plumbing live in **keyed mutation defaults** on the QueryClient (`src/api/queryClient.ts`), not inline in the hooks — a requirement of offline persistence (§13); the hooks bind by `mutationKey` only.
 - Sorting is done client-side from the flat `items` array (`unchecked: sort by position` / `checked: sort by localeCompare(name)`), matching the server's order — so an optimistic check/uncheck lands the row in the right place without waiting for the network.
 
 ### Drag and drop specifics
@@ -393,7 +394,8 @@ aisle-flow/
   - list splits/sorts correctly (unchecked by position, checked alphabetically);
   - checking an item moves it to the checked section optimistically;
   - add-duplicate highlights instead of duplicating;
-  - failed mutation rolls back and shows the error Snackbar.
+  - failed mutation rolls back and shows the error Snackbar;
+  - offline queue (§13): mutations made while `onlineManager` is offline send nothing and replay on reconnect, and a *create → check* chain replays in order against the client-generated uuid.
 - Drag-and-drop ordering is verified through the `dragEnd` handler unit (given a drop index, the right `before`/`after` ids are sent) rather than simulating pointer events.
 
 ### End-to-end (lightweight)
@@ -410,4 +412,40 @@ Explicitly out of scope now; the design leaves seams for them:
 - **Auth** — no-auth is isolated to "there's no middleware"; a session or shared-token middleware slots into `internal/api/middleware.go` without touching handlers.
 - **Push updates** — replace polling with SSE (`GET /api/events`); TanStack Query invalidation on event keeps the rest of the frontend unchanged.
 - **Item metadata** — quantity/note columns are additive migrations; `ItemRow` grows secondary text.
-- **PWA/offline** — service worker + mutation queue; last-write-wins semantics already tolerate delayed replays.
+
+---
+
+## 13. Offline & PWA
+
+The app is installable and usable in a store with no reception: the shell and last-known list render offline, and mutations made offline queue locally and replay on reconnect. Two independent layers deliver this.
+
+### Layer 1: service worker (assets)
+
+`vite-plugin-pwa` in `generateSW` mode (config in `frontend/vite.config.ts`):
+
+- **Precache** of the built app shell (`registerType: 'autoUpdate'` — new versions activate silently on the next visit; `no-cache` headers on `sw.js`/`index.html` in §4 make that prompt).
+- **Runtime cache** for `GET /api/items`: `NetworkFirst` with a 3 s timeout — belt-and-braces for a cold SW-served load; the persisted query cache below is the primary offline data source.
+- Manifest + icons (rendered from `favicon.svg`); `devOptions.enabled: false` — dev stays SW-free, the worker is exercised against the prod build.
+- The SW never sees mutations; queuing is the app's job (Workbox Background Sync was rejected: replies never reach the app, so the create response and optimistic reconciliation would be lost).
+
+### Layer 2: mutation queue (TanStack Query paused mutations)
+
+React Query pauses mutations while `onlineManager` reports offline; `PersistQueryClientProvider` + `createSyncStoragePersister` (in `App.tsx`) dehydrate the query cache **and paused mutations** to localStorage (`aisleflow-cache`, short `throttleTime` so a tap just before the tab dies still lands). On startup or reconnect, `resumePausedMutations()` replays the queue, then invalidates `['items']`.
+
+Requirements that follow, and where they live:
+
+- **Mutation logic must be re-attachable after a reload** — inline `mutationFn`s aren't serialized. All mutation functions + optimistic plumbing are registered as keyed `setMutationDefaults` in `src/api/queryClient.ts`; hooks bind by key. Component-level `mutate(vars, callbacks)` callbacks would not run for resumed mutations, so nothing meaningful may live there.
+- **Client-generated item ids** — an offline *add → check* chain needs a usable id before the server replies, so `useAddItem` generates the uuid (`crypto.randomUUID()`) and `POST /api/items` accepts it (§6). The optimistic id **is** the real id; no remapping.
+- **Replay ordering** — all mutations share a scope (`scope: { id: 'items' }`), so the queue replays serially in FIFO order.
+- **Replay failure policy** — network errors retry (and re-pause if the connection drops again); HTTP `ApiError`s fail fast: the stale mutation drops out of the queue, `onSettled` invalidates, server truth wins. Covers a reorder whose neighbor vanished (404) and name conflicts (409).
+- **Rollback after reload** — the `onMutate` snapshot context doesn't survive a reload; `onError` falls back to invalidate-only, which is correct because the persisted cache already holds the optimistic state.
+- **Online state must be seeded** — `onlineManager` assumes online at startup and only reacts to window events, so a page *loaded* offline would fail mutations instead of queuing them; `main.tsx` seeds it from `navigator.onLine`. The TopBar shows an "Offline" chip driven by the same manager.
+
+### Accepted last-write-wins caveats
+
+Household-scale trade-offs, chosen deliberately:
+
+- A queued `PATCH` replayed later overwrites whatever the row holds then — LWW means *last to arrive*. No version guard.
+- `DELETE /api/items?checked=true` clears whatever is checked *at replay time*, not the set the user saw.
+- A replayed add of a name that was checked in the meantime revives (unchecks) it — consistent with the §6 create-or-revive semantics.
+- Idempotence: check/uncheck writes absolute values and deletes tolerate 404, so duplicate replays converge; a replayed create converges on the existing row via the name conflict.
