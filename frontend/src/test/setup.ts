@@ -1,4 +1,5 @@
 import '@testing-library/jest-dom/vitest'
+import { afterEach } from 'vitest'
 import { onlineManager } from '@tanstack/react-query'
 
 // Node's experimental localStorage global shadows jsdom's and is undefined

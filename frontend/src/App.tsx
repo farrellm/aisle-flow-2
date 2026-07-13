@@ -60,6 +60,9 @@ export default function App() {
     createSyncStoragePersister({
       storage: window.localStorage,
       key: 'aisleflow-cache',
+      // Default 1s throttle risks losing a just-queued mutation if the
+      // tab closes right after a tap; the state is tiny, write sooner.
+      throttleTime: 250,
     }),
   )
 
