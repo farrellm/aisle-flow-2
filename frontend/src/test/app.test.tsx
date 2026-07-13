@@ -29,7 +29,6 @@ describe('AisleFlow', () => {
     const lists = screen.getAllByRole('list')
     expect(itemNames(lists[0])).toEqual(['Milk', 'Coffee'])
     expect(itemNames(lists[1])).toEqual(['Apples', 'banana'])
-    expect(screen.getByText('2 in cart')).toBeInTheDocument()
   })
 
   it('moves a checked item into the checked section optimistically', async () => {
@@ -41,7 +40,8 @@ describe('AisleFlow', () => {
     const user = userEvent.setup()
     await user.click(await screen.findByRole('checkbox', { name: 'Milk' }))
 
-    expect(await screen.findByText('1 in cart')).toBeInTheDocument()
+    // The checked section only mounts once the optimistic update lands.
+    await waitFor(() => expect(screen.getAllByRole('list')).toHaveLength(2))
     const lists = screen.getAllByRole('list')
     expect(itemNames(lists[0])).toEqual(['Bread'])
     expect(itemNames(lists[1])).toEqual(['Milk'])

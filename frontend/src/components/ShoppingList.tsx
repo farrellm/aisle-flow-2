@@ -1,11 +1,11 @@
 import Box from '@mui/material/Box'
 import CircularProgress from '@mui/material/CircularProgress'
+import Divider from '@mui/material/Divider'
 import Typography from '@mui/material/Typography'
 import { useDeleteItem, useItems, useUpdateItem } from '../api/hooks'
 import { splitItems } from '../api/sort'
 import type { Item } from '../api/types'
 import CheckedList from './CheckedList'
-import SectionDivider from './SectionDivider'
 import UncheckedList from './UncheckedList'
 
 function CenteredNote({ children }: { children: React.ReactNode }) {
@@ -58,7 +58,7 @@ export default function ShoppingList({ flashId }: { flashId: string | null }) {
       )}
       {checked.length > 0 && (
         <>
-          <SectionDivider count={checked.length} />
+          <Divider sx={{ my: 1 }} />
           <CheckedList items={checked} onToggle={handleToggle} onDelete={handleDelete} />
         </>
       )}
