@@ -6,6 +6,9 @@ import type React from 'react'
 const ACTIVATION_SLOP_PX = 12
 // Fraction of the row width the swipe must cross to commit the delete.
 const COMMIT_FRACTION = 0.4
+// Width of the revealed Delete button strip (exported so ItemRow sizes the
+// button to match).
+export const REVEAL_WIDTH_PX = 72
 
 export interface SwipeState {
   // Current leftward translation of the row content, <= 0.
@@ -13,6 +16,8 @@ export interface SwipeState {
   // True once the swipe has passed the commit threshold and the delete fired.
   deleting: boolean
   swiping: boolean
+  // True while the row rests open with the Delete button exposed.
+  revealed: boolean
   handlers: {
     onPointerDown: React.PointerEventHandler
     onPointerMove: React.PointerEventHandler
@@ -24,26 +29,23 @@ export interface SwipeState {
 
 // Swipe right-to-left to delete. Pointer Events, so it works for both touch
 // and mouse. The row content follows the finger leftward; releasing past the
-// commit threshold slides it off-screen and calls onDelete, otherwise it
+// commit threshold slides it off-screen and calls onDelete, a shorter swipe
+// snaps the row open to reveal a tappable Delete button, and anything less
 // springs back.
 export function useSwipeToDelete(onDelete: () => void): SwipeState {
   const [dx, setDx] = useState(0)
   const [deleting, setDeleting] = useState(false)
   const [swiping, setSwiping] = useState(false)
+  const [revealed, setRevealed] = useState(false)
   const gesture = useRef<{
     pointerId: number
     startX: number
     startY: number
+    baseDx: number
     active: boolean
   } | null>(null)
   // Survives gesture reset: the click event fires after pointerup.
   const suppressNextClick = useRef(false)
-
-  const reset = () => {
-    gesture.current = null
-    setSwiping(false)
-    setDx(0)
-  }
 
   const onPointerDown: React.PointerEventHandler = (e) => {
     if (deleting || (e.pointerType === 'mouse' && e.button !== 0)) return
@@ -51,6 +53,7 @@ export function useSwipeToDelete(onDelete: () => void): SwipeState {
       pointerId: e.pointerId,
       startX: e.clientX,
       startY: e.clientY,
+      baseDx: revealed ? -REVEAL_WIDTH_PX : 0,
       active: false,
     }
   }
@@ -69,7 +72,7 @@ export function useSwipeToDelete(onDelete: () => void): SwipeState {
       setSwiping(true)
       e.currentTarget.setPointerCapture(e.pointerId)
     }
-    setDx(Math.min(0, moveX)) // leftward only
+    setDx(Math.min(0, g.baseDx + moveX)) // leftward only
   }
 
   const finish: React.PointerEventHandler = (e) => {
@@ -77,18 +80,32 @@ export function useSwipeToDelete(onDelete: () => void): SwipeState {
     if (!g || g.pointerId !== e.pointerId) return
     if (!g.active) {
       gesture.current = null
+      // A plain tap on the row content closes a revealed row without
+      // toggling the checkbox underneath.
+      if (revealed) {
+        setRevealed(false)
+        setDx(0)
+        suppressNextClick.current = true
+      }
       return
     }
     const width = e.currentTarget.getBoundingClientRect().width
-    const travelled = g.startX - e.clientX
-    if (e.type !== 'pointercancel' && travelled >= width * COMMIT_FRACTION) {
+    // Final leftward offset of the row content; positive = open.
+    const offset = g.baseDx - (e.clientX - g.startX)
+    gesture.current = null
+    setSwiping(false)
+    if (e.type === 'pointercancel') {
+      setDx(revealed ? -REVEAL_WIDTH_PX : 0)
+    } else if (offset >= width * COMMIT_FRACTION) {
       setDeleting(true)
       setDx(-width)
       onDelete()
-      gesture.current = null
-      setSwiping(false)
+    } else if (offset >= REVEAL_WIDTH_PX / 2) {
+      setRevealed(true)
+      setDx(-REVEAL_WIDTH_PX)
     } else {
-      reset()
+      setRevealed(false)
+      setDx(0)
     }
   }
 
@@ -105,6 +122,7 @@ export function useSwipeToDelete(onDelete: () => void): SwipeState {
     dx,
     deleting,
     swiping,
+    revealed,
     handlers: {
       onPointerDown,
       onPointerMove,
