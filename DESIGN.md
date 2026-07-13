@@ -47,7 +47,7 @@ A single screen, mobile-first, max content width ~600 px centered on larger scre
 │  ⠿ ☐ Bread                          │  │ Unchecked section
 │  ⠿ ☐ Coffee beans                   │  │ (drag handles, manual order)
 │  ⠿ ☐ Tomatoes                       │  ┘
-│  ─────────── 3 in cart ───────────  │  ← Divider with checked count
+│  ─────────────────────────────────  │  ← Divider
 │    ☑ ~~Apples~~                     │  ┐
 │    ☑ ~~Butter~~                     │  │ Checked section
 │    ☑ ~~Yogurt~~                     │  ┘ (alphabetical, no handles)
@@ -62,7 +62,7 @@ A single screen, mobile-first, max content width ~600 px centered on larger scre
 | Add bar | `TextField` + `IconButton` (`AddIcon`), or `Fab` on mobile |
 | Item rows | `List` / `ListItem` + `Checkbox` + `ListItemText` |
 | Drag handle | `DragIndicatorIcon` (unchecked rows only) |
-| Section divider | `Divider` with checked-count label |
+| Section divider | `Divider` |
 | Delete | `IconButton` (`DeleteOutlineIcon`) revealed on hover / always visible on touch |
 | Clear checked | Menu item under the AppBar `⋮` menu, with a confirm `Dialog` |
 | Errors | `Snackbar` + `Alert` |
@@ -241,7 +241,7 @@ Race notes: `POST` uses `INSERT … ON CONFLICT (name)` + follow-up logic in one
  └─ <ShoppingList>            useItems query; splits into unchecked/checked
      ├─ <UncheckedList>       DndContext + SortableContext
      │   └─ <ItemRow sortable>  drag handle, checkbox, name, delete
-     ├─ <SectionDivider>      "N in cart"
+     ├─ <Divider>
      └─ <CheckedList>
          └─ <ItemRow>           checkbox, struck-through name, delete
 ```
