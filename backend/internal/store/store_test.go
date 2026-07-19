@@ -328,30 +328,17 @@ func TestRenameConflictAndBlank(t *testing.T) {
 	}
 }
 
-func TestDeleteAndClearChecked(t *testing.T) {
+func TestDelete(t *testing.T) {
 	s, list := newStore(t)
 	ctx := context.Background()
 
 	a := mustAdd(t, s, list, "A")
-	b := mustAdd(t, s, list, "B")
-	c := mustAdd(t, s, list, "C")
-	setChecked(t, s, list, b.ID, true)
-	setChecked(t, s, list, c.ID, true)
 
 	if err := s.Delete(ctx, list, a.ID); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 	if err := s.Delete(ctx, list, a.ID); err != store.ErrNotFound {
 		t.Fatalf("double delete: err=%v, want ErrNotFound", err)
-	}
-
-	deleted, err := s.ClearChecked(ctx, list)
-	if err != nil || deleted != 2 {
-		t.Fatalf("clear checked: deleted=%d err=%v, want 2", deleted, err)
-	}
-	items, _ := s.ListItems(ctx, list)
-	if len(items) != 0 {
-		t.Fatalf("got %d rows after clear, want 0", len(items))
 	}
 }
 
@@ -493,9 +480,6 @@ func TestItemsUnknownOrWrongList(t *testing.T) {
 	if _, _, _, err := s.CreateOrRevive(ctx, missing, "Milk", nil); err != store.ErrListNotFound {
 		t.Fatalf("create in unknown list: err=%v, want ErrListNotFound", err)
 	}
-	if _, err := s.ClearChecked(ctx, missing); err != store.ErrListNotFound {
-		t.Fatalf("clear checked of unknown list: err=%v, want ErrListNotFound", err)
-	}
 
 	// An existing item addressed through the wrong list is not found.
 	other := mustAddList(t, s, "Other").ID
@@ -506,25 +490,5 @@ func TestItemsUnknownOrWrongList(t *testing.T) {
 	}
 	if err := s.Delete(ctx, other, milk.ID); err != store.ErrNotFound {
 		t.Fatalf("delete via wrong list: err=%v, want ErrNotFound", err)
-	}
-}
-
-func TestClearCheckedScoped(t *testing.T) {
-	s, groceries := newStore(t)
-	ctx := context.Background()
-
-	hardware := mustAddList(t, s, "Hardware").ID
-	gA := mustAdd(t, s, groceries, "A")
-	hA := mustAdd(t, s, hardware, "A")
-	setChecked(t, s, groceries, gA.ID, true)
-	setChecked(t, s, hardware, hA.ID, true)
-
-	deleted, err := s.ClearChecked(ctx, groceries)
-	if err != nil || deleted != 1 {
-		t.Fatalf("clear checked: deleted=%d err=%v, want 1", deleted, err)
-	}
-	items, _ := s.ListItems(ctx, hardware)
-	if len(items) != 1 {
-		t.Fatalf("hardware items cleared too: %v", names(items))
 	}
 }

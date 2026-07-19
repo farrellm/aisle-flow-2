@@ -175,23 +175,6 @@ func (h *handlers) deleteItem(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *handlers) clearChecked(w http.ResponseWriter, r *http.Request) {
-	listID, ok := pathUUID(w, r, "listId", "list")
-	if !ok {
-		return
-	}
-	if r.URL.Query().Get("checked") != "true" {
-		badRequest(w, "bulk delete requires ?checked=true")
-		return
-	}
-	deleted, err := h.store.ClearChecked(r.Context(), listID)
-	if err != nil {
-		writeStoreError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"deleted": deleted})
-}
-
 func (h *handlers) healthz(w http.ResponseWriter, r *http.Request) {
 	if err := h.store.Ping(r.Context()); err != nil {
 		writeStoreError(w, err)

@@ -30,10 +30,6 @@ export interface DeleteVars {
   id: string
 }
 
-export interface ClearVars {
-  listId: string
-}
-
 export interface AddListVars {
   id: string
   name: string
@@ -156,11 +152,6 @@ export function createAppQueryClient(): QueryClient {
     ...optimistic<DeleteVars>((items, { id }) =>
       items.filter((i) => i.id !== id),
     ),
-  })
-
-  client.setMutationDefaults(['clearChecked'], {
-    mutationFn: ({ listId }: ClearVars) => api.clearChecked(listId),
-    ...optimistic<ClearVars>((items) => items.filter((i) => !i.checked)),
   })
 
   client.setMutationDefaults(['addList'], {

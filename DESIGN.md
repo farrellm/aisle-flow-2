@@ -59,14 +59,13 @@ A single screen, mobile-first, max content width ~600 px centered on larger scre
 |---|---|
 | Top bar | `AppBar` + `Toolbar` |
 | List switcher | AppBar title is a `Button` (current list name + `ArrowDropDownIcon`) opening a `Menu`: one item per list + "New list…" |
-| List management | `⋮` menu: "Rename list…", "Delete list…" (disabled when only one list), "Clear checked…" |
+| List management | `⋮` menu: "Rename list…", "Delete list…" (disabled when only one list) |
 | New/Rename list | shared `ListNameDialog` (`Dialog` + `TextField`) |
 | Add bar | `TextField` + `IconButton` (`AddIcon`), or `Fab` on mobile |
 | Item rows | `List` / `ListItem` + `Checkbox` + `ListItemText` |
 | Drag handle | `DragIndicatorIcon` (unchecked rows only) |
 | Section divider | `Divider` |
 | Delete | `IconButton` (`DeleteOutlineIcon`) revealed on hover / always visible on touch |
-| Clear checked | Menu item under the AppBar `⋮` menu, with a confirm `Dialog` |
 | Errors | `Snackbar` + `Alert` |
 | Theme | `ThemeProvider` with a standard Material palette; respect `prefers-color-scheme` for light/dark |
 
@@ -79,7 +78,6 @@ A single screen, mobile-first, max content width ~600 px centered on larger scre
 - **Uncheck:** tap the checkbox of a checked item. It returns to the unchecked section **at its preserved position** (see §3).
 - **Reorder:** drag an unchecked row by its handle. Only the unchecked section is sortable; rows cannot be dragged into the checked section. During a drag, polling updates are paused (see §7).
 - **Delete:** per-row delete icon removes the item permanently. No confirm dialog for a single item (low stakes; the item can be retyped).
-- **Clear checked:** removes all checked items in the current list at once, behind a confirmation dialog.
 
 ### Lists
 
@@ -243,7 +241,6 @@ Item endpoints are nested under their list. An item id addressed through the wro
 | `POST /api/lists/{listId}/items` | `{ "name": string, "id"?: uuid }` | `201` `{ "item": Item, "revived": false }` — created<br>`200` `{ "item": Item, "revived": true }` — existing checked item was unchecked<br>`200` `{ "item": Item, "revived": false }` — already unchecked, no-op | Create-or-revive within the list. Name is trimmed server-side; blank → `422`. The optional `id` lets offline clients generate the uuid themselves so queued follow-up mutations can reference the item before the response arrives (§13); an `id` colliding with a different name → `409`; unknown list → `404`. |
 | `PATCH /api/lists/{listId}/items/{id}` | any subset of:<br>`{ "name": string }`<br>`{ "checked": boolean }`<br>`{ "before": id \| null, "after": id \| null }` | `200` `{ "item": Item }` | Rename, check/uncheck, and/or reorder. `before`/`after` name the unchecked neighbors at the drop location (`null` = edge of the unchecked section); the **server** computes the new `position` (§3). |
 | `DELETE /api/lists/{listId}/items/{id}` | — | `204` | Delete one item. |
-| `DELETE /api/lists/{listId}/items?checked=true` | — | `200` `{ "deleted": number }` | Clear the list's checked items. Without the query param → `400` (guards against wiping the list). |
 | `GET /api/healthz` | — | `200` `{ "status": "ok" }` | Liveness + DB ping. |
 
 ### Errors
@@ -254,7 +251,7 @@ Uniform shape, appropriate status codes:
 { "error": { "code": "not_found", "message": "item not found" } }
 ```
 
-- `400 bad_request` — malformed JSON, invalid uuid, missing `?checked=true`.
+- `400 bad_request` — malformed JSON, invalid uuid.
 - `404 not_found` — unknown item or list id (including a `before`/`after` id that vanished, or an item addressed through the wrong list; client refetches).
 - `409 conflict` — rename/create collides with an existing name.
 - `409 last_list` — refused delete of the only remaining list.
@@ -302,7 +299,7 @@ Race notes: `POST` uses `INSERT … ON CONFLICT (list_id, name)` + follow-up log
 ### Data layer (`src/api/`)
 
 - Query keys: `['lists']` for the list collection, and `['items', listId]` per list (`itemsKey(listId)`). `useLists()` and `useItems(listId)` both `useQuery({ refetchInterval: 4000, refetchOnWindowFocus: true })`, with polling **paused while a drag is in progress or a mutation is in flight or queued** (`refetchInterval` callback form) so a refetch can't yank rows mid-drag.
-- Item mutations (`useAddItem`, `useUpdateItem`, `useDeleteItem`, `useClearChecked`) and list mutations (`useAddList`, `useRenameList`, `useDeleteList`) all follow the standard TanStack optimistic pattern: `onMutate` cancels in-flight queries and patches the cache; `onError` restores the snapshot and shows a Snackbar; `onSettled` invalidates to reconcile with the server (picking up the server-computed `position`). The mutation functions and this optimistic plumbing live in **keyed mutation defaults** on the QueryClient (`src/api/queryClient.ts`), not inline in the hooks — a requirement of offline persistence (§13); the hooks bind by `mutationKey` only.
+- Item mutations (`useAddItem`, `useUpdateItem`, `useDeleteItem`) and list mutations (`useAddList`, `useRenameList`, `useDeleteList`) all follow the standard TanStack optimistic pattern: `onMutate` cancels in-flight queries and patches the cache; `onError` restores the snapshot and shows a Snackbar; `onSettled` invalidates to reconcile with the server (picking up the server-computed `position`). The mutation functions and this optimistic plumbing live in **keyed mutation defaults** on the QueryClient (`src/api/queryClient.ts`), not inline in the hooks — a requirement of offline persistence (§13); the hooks bind by `mutationKey` only.
 - **`listId` travels inside every item mutation's vars** (`{ listId, id, … }`), not captured from a closure: vars are what the persister serializes, so a mutation resumed after a reload re-derives its `['items', listId]` key and request URL from them alone. The `optimistic()` helper reads `vars.listId` to target the right cache entry.
 - Sorting is done client-side from a list's flat `items` array (`unchecked: sort by position` / `checked: sort by localeCompare(name)`), matching the server's order — so an optimistic check/uncheck lands the row in the right place without waiting for the network.
 
@@ -337,7 +334,7 @@ backend/
 ├─ internal/store/           data layer — owns all SQL and the position algorithm
 │  ├─ store.go               Store struct over *pgxpool.Pool; Item, List types
 │  ├─ lists.go               ListLists, CreateList, RenameList, DeleteList
-│  ├─ items.go               ListItems, CreateOrRevive, Update, Delete, ClearChecked (all take listID)
+│  ├─ items.go               ListItems, CreateOrRevive, Update, Delete (all take listID)
 │  └─ position.go            midpoint computation + per-list renormalization (§3)
 └─ internal/webui/           embed.FS of the built frontend (production)
 ```
@@ -436,13 +433,13 @@ aisle-flow/
 
 ### Backend
 
-- **Store integration tests** against a real Postgres (the docker-compose instance, or [testcontainers-go] if preferred): exercise `CreateOrRevive` dedup/revive paths, `ClearChecked`, and — most importantly — the ordering model:
+- **Store integration tests** against a real Postgres (the docker-compose instance, or [testcontainers-go] if preferred): exercise `CreateOrRevive` dedup/revive paths and — most importantly — the ordering model:
   - check → uncheck restores relative order (the §3 worked example as a table test);
   - midpoint reorder between arbitrary neighbors;
   - forced renormalization (seed positions `1.0` and `1.0 + 1e-7`, insert between, assert all positions rewritten and order preserved) — and that a *second* list with the same tight positions is left untouched;
   - concurrent `POST` of the same name converges to one row.
-- **List tests:** list CRUD; duplicate name → conflict; the same name coexisting in two lists; revive/clear-checked scoped to one list; deleting a list cascades its items; the last-list guard (including two concurrent deletes leaving exactly one list).
-- **Handler tests** with `httptest` against a store backed by the test DB: status codes, error envelope shape, `?checked=true` guard, list lifecycle, `409 last_list`, unknown-list and wrong-list `404`s. The test-DB helper applies **all** migrations in `db/migrations/` in order.
+- **List tests:** list CRUD; duplicate name → conflict; the same name coexisting in two lists; revive scoped to one list; deleting a list cascades its items; the last-list guard (including two concurrent deletes leaving exactly one list).
+- **Handler tests** with `httptest` against a store backed by the test DB: status codes, error envelope shape, list lifecycle, `409 last_list`, unknown-list and wrong-list `404`s. The test-DB helper applies **all** migrations in `db/migrations/` in order.
 
 ### Frontend
 
@@ -458,7 +455,7 @@ aisle-flow/
 
 ### End-to-end (lightweight)
 
-A single happy-path script (Playwright, optional) run against `make dev`: add three items, reorder, check one, uncheck it, assert it returns to its slot, clear checked.
+A single happy-path script (Playwright, optional) run against `make dev`: add three items, reorder, check one, uncheck it, assert it returns to its slot.
 
 ---
 
@@ -504,7 +501,6 @@ Requirements that follow, and where they live:
 Household-scale trade-offs, chosen deliberately:
 
 - A queued `PATCH` replayed later overwrites whatever the row holds then — LWW means *last to arrive*. No version guard.
-- `DELETE /api/lists/{id}/items?checked=true` clears whatever is checked *at replay time*, not the set the user saw.
 - A replayed add of a name that was checked in the meantime revives (unchecks) it — consistent with the §6 create-or-revive semantics.
 - Idempotence: check/uncheck writes absolute values and deletes tolerate 404, so duplicate replays converge; a replayed create converges on the existing row via the name conflict.
 - **Upgrade cost:** the persister `buster` bumped from `v1` to `v2` for this change, so on the first load of the new version the pre-upgrade cache **and any mutations still queued in the old (listless) format are discarded** — a one-time loss, acceptable at household scale.

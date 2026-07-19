@@ -21,7 +21,6 @@ import { useNavigate } from 'react-router-dom'
 import {
   getCachedItems,
   useAddList,
-  useClearChecked,
   useDeleteList,
   useLists,
   useRenameList,
@@ -32,14 +31,12 @@ export default function TopBar({ listId }: { listId: string }) {
   const navigate = useNavigate()
   const client = useQueryClient()
   const { data: lists } = useLists()
-  const clearChecked = useClearChecked()
   const addList = useAddList()
   const renameList = useRenameList()
   const deleteList = useDeleteList()
 
   const [listMenuAnchor, setListMenuAnchor] = useState<HTMLElement | null>(null)
   const [overflowAnchor, setOverflowAnchor] = useState<HTMLElement | null>(null)
-  const [clearOpen, setClearOpen] = useState(false)
   const [newListOpen, setNewListOpen] = useState(false)
   const [renameOpen, setRenameOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
@@ -150,37 +147,7 @@ export default function TopBar({ listId }: { listId: string }) {
           >
             Delete list…
           </MenuItem>
-          <Divider />
-          <MenuItem
-            onClick={() => {
-              setOverflowAnchor(null)
-              setClearOpen(true)
-            }}
-          >
-            Clear checked…
-          </MenuItem>
         </Menu>
-
-        <Dialog open={clearOpen} onClose={() => setClearOpen(false)}>
-          <DialogTitle>Clear checked items?</DialogTitle>
-          <DialogContent>
-            <DialogContentText>
-              All checked items will be removed from the list permanently.
-            </DialogContentText>
-          </DialogContent>
-          <DialogActions>
-            <Button onClick={() => setClearOpen(false)}>Cancel</Button>
-            <Button
-              color="error"
-              onClick={() => {
-                setClearOpen(false)
-                clearChecked.mutate({ listId })
-              }}
-            >
-              Clear
-            </Button>
-          </DialogActions>
-        </Dialog>
 
         <Dialog open={deleteOpen} onClose={() => setDeleteOpen(false)}>
           <DialogTitle>Delete “{currentList?.name}”?</DialogTitle>

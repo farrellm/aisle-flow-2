@@ -62,8 +62,4 @@ export const api = {
     }),
   deleteItem: (listId: string, id: string) =>
     request<void>(`/api/lists/${listId}/items/${id}`, { method: 'DELETE' }),
-  clearChecked: (listId: string) =>
-    request<{ deleted: number }>(`/api/lists/${listId}/items?checked=true`, {
-      method: 'DELETE',
-    }),
 }
