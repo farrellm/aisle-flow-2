@@ -11,13 +11,23 @@ import (
 var (
 	ErrNotFound     = errors.New("item not found")
 	ErrNameConflict = errors.New("an item with that name already exists")
+	ErrListNotFound = errors.New("list not found")
+	ErrLastList     = errors.New("cannot delete the only list")
 )
 
 type Item struct {
 	ID        string    `json:"id"`
+	ListID    string    `json:"listId"`
 	Name      string    `json:"name"`
 	Checked   bool      `json:"checked"`
 	Position  float64   `json:"position"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+type List struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }
@@ -30,7 +40,9 @@ func New(pool *pgxpool.Pool) *Store {
 	return &Store{pool: pool}
 }
 
-const itemColumns = `id::text, name::text, checked, position, created_at, updated_at`
+const itemColumns = `id::text, list_id::text, name::text, checked, position, created_at, updated_at`
+
+const listColumns = `id::text, name::text, created_at, updated_at`
 
 type rowScanner interface {
 	Scan(dest ...any) error
@@ -38,6 +50,12 @@ type rowScanner interface {
 
 func scanItem(row rowScanner) (Item, error) {
 	var it Item
-	err := row.Scan(&it.ID, &it.Name, &it.Checked, &it.Position, &it.CreatedAt, &it.UpdatedAt)
+	err := row.Scan(&it.ID, &it.ListID, &it.Name, &it.Checked, &it.Position, &it.CreatedAt, &it.UpdatedAt)
 	return it, err
+}
+
+func scanList(row rowScanner) (List, error) {
+	var l List
+	err := row.Scan(&l.ID, &l.Name, &l.CreatedAt, &l.UpdatedAt)
+	return l, err
 }

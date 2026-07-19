@@ -12,11 +12,15 @@ func NewRouter(s *store.Store, webui http.Handler) http.Handler {
 	h := &handlers{store: s}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/items", h.listItems)
-	mux.HandleFunc("POST /api/items", h.createItem)
-	mux.HandleFunc("PATCH /api/items/{id}", h.updateItem)
-	mux.HandleFunc("DELETE /api/items/{id}", h.deleteItem)
-	mux.HandleFunc("DELETE /api/items", h.clearChecked)
+	mux.HandleFunc("GET /api/lists", h.listLists)
+	mux.HandleFunc("POST /api/lists", h.createList)
+	mux.HandleFunc("PATCH /api/lists/{listId}", h.updateList)
+	mux.HandleFunc("DELETE /api/lists/{listId}", h.deleteList)
+	mux.HandleFunc("GET /api/lists/{listId}/items", h.listItems)
+	mux.HandleFunc("POST /api/lists/{listId}/items", h.createItem)
+	mux.HandleFunc("PATCH /api/lists/{listId}/items/{id}", h.updateItem)
+	mux.HandleFunc("DELETE /api/lists/{listId}/items/{id}", h.deleteItem)
+	mux.HandleFunc("DELETE /api/lists/{listId}/items", h.clearChecked)
 	mux.HandleFunc("GET /api/healthz", h.healthz)
 
 	if webui != nil {

@@ -1,4 +1,4 @@
-import type { Item, UpdatePatch } from './types'
+import type { Item, ListInfo, UpdatePatch } from './types'
 
 export class ApiError extends Error {
   status: number
@@ -33,21 +33,37 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  listItems: () => request<{ items: Item[] }>('/api/items'),
-  // The client supplies the id so mutations queued offline behind the
-  // create can reference the item before the response arrives.
-  addItem: (name: string, id?: string) =>
-    request<{ item: Item; revived: boolean }>('/api/items', {
+  listLists: () => request<{ lists: ListInfo[] }>('/api/lists'),
+  // The client supplies list/item ids so mutations queued offline behind a
+  // create can reference the new row before the response arrives (§13).
+  addList: (name: string, id?: string) =>
+    request<{ list: ListInfo }>('/api/lists', {
       method: 'POST',
       body: JSON.stringify(id ? { id, name } : { name }),
     }),
-  updateItem: (id: string, patch: UpdatePatch) =>
-    request<{ item: Item }>(`/api/items/${id}`, {
+  renameList: (id: string, name: string) =>
+    request<{ list: ListInfo }>(`/api/lists/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    }),
+  deleteList: (id: string) =>
+    request<void>(`/api/lists/${id}`, { method: 'DELETE' }),
+  listItems: (listId: string) =>
+    request<{ items: Item[] }>(`/api/lists/${listId}/items`),
+  addItem: (listId: string, name: string, id?: string) =>
+    request<{ item: Item; revived: boolean }>(`/api/lists/${listId}/items`, {
+      method: 'POST',
+      body: JSON.stringify(id ? { id, name } : { name }),
+    }),
+  updateItem: (listId: string, id: string, patch: UpdatePatch) =>
+    request<{ item: Item }>(`/api/lists/${listId}/items/${id}`, {
       method: 'PATCH',
       body: JSON.stringify(patch),
     }),
-  deleteItem: (id: string) =>
-    request<void>(`/api/items/${id}`, { method: 'DELETE' }),
-  clearChecked: () =>
-    request<{ deleted: number }>('/api/items?checked=true', { method: 'DELETE' }),
+  deleteItem: (listId: string, id: string) =>
+    request<void>(`/api/lists/${listId}/items/${id}`, { method: 'DELETE' }),
+  clearChecked: (listId: string) =>
+    request<{ deleted: number }>(`/api/lists/${listId}/items?checked=true`, {
+      method: 'DELETE',
+    }),
 }

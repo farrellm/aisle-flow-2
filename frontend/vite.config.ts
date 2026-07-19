@@ -33,15 +33,19 @@ export default defineConfig({
         navigateFallbackDenylist: [/^\/api\//],
         runtimeCaching: [
           // Belt-and-braces: the persisted query cache is the primary
-          // offline data source; this covers a cold SW-served load.
+          // offline data source; this covers a cold SW-served load. Matches
+          // GET /api/lists and each list's GET /api/lists/{id}/items.
           {
             urlPattern: ({ url, request }) =>
-              url.pathname === '/api/items' && request.method === 'GET',
+              request.method === 'GET' &&
+              (url.pathname === '/api/lists' ||
+                /^\/api\/lists\/[^/]+\/items$/.test(url.pathname)),
             handler: 'NetworkFirst',
             options: {
               cacheName: 'api-items',
               networkTimeoutSeconds: 3,
-              expiration: { maxEntries: 1 },
+              // Room for the lists response plus several lists' items.
+              expiration: { maxEntries: 16 },
             },
           },
         ],

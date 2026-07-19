@@ -25,11 +25,13 @@ type ReorderTarget struct {
 }
 
 // neighborPosition returns the position of the neighbor with the given id,
-// locked FOR UPDATE. ErrNotFound if the id has vanished (§6 race notes).
-func neighborPosition(ctx context.Context, tx pgx.Tx, id string) (float64, error) {
+// locked FOR UPDATE. ErrNotFound if the id has vanished (§6 race notes) or
+// belongs to another list.
+func neighborPosition(ctx context.Context, tx pgx.Tx, listID, id string) (float64, error) {
 	var pos float64
-	err := tx.QueryRow(ctx,
-		`SELECT position FROM items WHERE id = $1::uuid FOR UPDATE`, id).Scan(&pos)
+	err := tx.QueryRow(ctx, `
+		SELECT position FROM items
+		WHERE id = $1::uuid AND list_id = $2::uuid FOR UPDATE`, id, listID).Scan(&pos)
 	if err == pgx.ErrNoRows {
 		return 0, ErrNotFound
 	}
@@ -37,19 +39,19 @@ func neighborPosition(ctx context.Context, tx pgx.Tx, id string) (float64, error
 }
 
 // computePosition derives the moved item's new position from its neighbors,
-// renormalizing the whole table first if the gap is exhausted.
-func computePosition(ctx context.Context, tx pgx.Tx, itemID string, target ReorderTarget) (float64, error) {
-	pos, ok, err := tryComputePosition(ctx, tx, itemID, target)
+// renormalizing the whole list first if the gap is exhausted.
+func computePosition(ctx context.Context, tx pgx.Tx, listID, itemID string, target ReorderTarget) (float64, error) {
+	pos, ok, err := tryComputePosition(ctx, tx, listID, itemID, target)
 	if err != nil {
 		return 0, err
 	}
 	if ok {
 		return pos, nil
 	}
-	if err := renormalize(ctx, tx); err != nil {
+	if err := renormalize(ctx, tx, listID); err != nil {
 		return 0, err
 	}
-	pos, ok, err = tryComputePosition(ctx, tx, itemID, target)
+	pos, ok, err = tryComputePosition(ctx, tx, listID, itemID, target)
 	if err != nil {
 		return 0, err
 	}
@@ -61,14 +63,14 @@ func computePosition(ctx context.Context, tx pgx.Tx, itemID string, target Reord
 
 // tryComputePosition returns (position, false, nil) when the midpoint would
 // land too close to a neighbor and a renormalization is required.
-func tryComputePosition(ctx context.Context, tx pgx.Tx, itemID string, target ReorderTarget) (float64, bool, error) {
+func tryComputePosition(ctx context.Context, tx pgx.Tx, listID, itemID string, target ReorderTarget) (float64, bool, error) {
 	switch {
 	case target.After != nil && target.Before != nil:
-		above, err := neighborPosition(ctx, tx, *target.After)
+		above, err := neighborPosition(ctx, tx, listID, *target.After)
 		if err != nil {
 			return 0, false, err
 		}
-		below, err := neighborPosition(ctx, tx, *target.Before)
+		below, err := neighborPosition(ctx, tx, listID, *target.Before)
 		if err != nil {
 			return 0, false, err
 		}
@@ -78,37 +80,38 @@ func tryComputePosition(ctx context.Context, tx pgx.Tx, itemID string, target Re
 		}
 		return mid, true, nil
 	case target.After != nil: // dropped at the bottom of the unchecked section
-		above, err := neighborPosition(ctx, tx, *target.After)
+		above, err := neighborPosition(ctx, tx, listID, *target.After)
 		if err != nil {
 			return 0, false, err
 		}
 		return above + positionGap, true, nil
 	case target.Before != nil: // dropped at the top of the unchecked section
-		below, err := neighborPosition(ctx, tx, *target.Before)
+		below, err := neighborPosition(ctx, tx, listID, *target.Before)
 		if err != nil {
 			return 0, false, err
 		}
 		return below - positionGap, true, nil
 	default:
 		// Only item in the unchecked section: keep its current position.
-		pos, err := neighborPosition(ctx, tx, itemID)
+		pos, err := neighborPosition(ctx, tx, listID, itemID)
 		return pos, err == nil, err
 	}
 }
 
-// renormalize rewrites every item's position to 1024, 2048, 3072, … following
+// renormalize rewrites one list's positions to 1024, 2048, 3072, … following
 // the current canonical order: unchecked by position first, then checked by
-// position, ties broken by created_at, id (§3). Relative order of all items,
-// checked included, is preserved.
-func renormalize(ctx context.Context, tx pgx.Tx) error {
+// position, ties broken by created_at, id (§3). Relative order of the list's
+// items, checked included, is preserved; other lists are untouched.
+func renormalize(ctx context.Context, tx pgx.Tx, listID string) error {
 	_, err := tx.Exec(ctx, `
 		WITH ordered AS (
 			SELECT id, row_number() OVER (
 				ORDER BY checked, position, created_at, id
 			) AS rn
 			FROM items
+			WHERE list_id = $2::uuid
 		)
 		UPDATE items SET position = ordered.rn * $1::double precision
-		FROM ordered WHERE items.id = ordered.id`, float64(positionGap))
+		FROM ordered WHERE items.id = ordered.id`, float64(positionGap), listID)
 	return err
 }

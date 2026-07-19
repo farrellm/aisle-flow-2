@@ -46,8 +46,12 @@ func writeStoreError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "item not found")
+	case errors.Is(err, store.ErrListNotFound):
+		writeError(w, http.StatusNotFound, "not_found", "list not found")
 	case errors.Is(err, store.ErrNameConflict):
-		writeError(w, http.StatusConflict, "conflict", "an item with that name already exists")
+		writeError(w, http.StatusConflict, "conflict", "that name already exists")
+	case errors.Is(err, store.ErrLastList):
+		writeError(w, http.StatusConflict, "last_list", "cannot delete the only list")
 	default:
 		slog.Error("internal error", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal", "internal server error")

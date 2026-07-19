@@ -40,10 +40,13 @@ export default function UncheckedList({ items, flashId, onToggle, onDelete }: Un
   const handleDragEnd = ({ active, over }: DragEndEvent) => {
     setDragging(false)
     if (!over) return
-    const plan = planReorder(items, String(active.id), String(over.id))
+    const moved = items.find((i) => i.id === String(active.id))
+    if (!moved) return
+    const plan = planReorder(items, moved.id, String(over.id))
     if (!plan) return
     updateItem.mutate({
-      id: String(active.id),
+      listId: moved.listId,
+      id: moved.id,
       patch: plan.patch,
       optimistic: { position: plan.position },
     })

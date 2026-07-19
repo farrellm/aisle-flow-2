@@ -6,16 +6,37 @@ import {
 } from '@tanstack/react-query'
 import { api } from './client'
 import { isDragging } from './notify'
-import { ITEMS_KEY, type AddVars, type UpdateVars } from './queryClient'
-import type { Item } from './types'
+import {
+  itemsKey,
+  LISTS_KEY,
+  type AddListVars,
+  type AddVars,
+  type ClearVars,
+  type DeleteListVars,
+  type DeleteVars,
+  type RenameListVars,
+  type UpdateVars,
+} from './queryClient'
+import type { Item, ListInfo } from './types'
 
 export type { UpdateVars } from './queryClient'
 
-export function useItems() {
+export function useLists() {
   const client = useQueryClient()
   return useQuery({
-    queryKey: ITEMS_KEY,
-    queryFn: async () => (await api.listItems()).items,
+    queryKey: LISTS_KEY,
+    queryFn: async () => (await api.listLists()).lists,
+    refetchInterval: () =>
+      isDragging() || client.isMutating() > 0 ? false : 4000,
+    refetchOnWindowFocus: true,
+  })
+}
+
+export function useItems(listId: string) {
+  const client = useQueryClient()
+  return useQuery({
+    queryKey: itemsKey(listId),
+    queryFn: async () => (await api.listItems(listId)).items,
     refetchInterval: () =>
       isDragging() || client.isMutating() > 0 ? false : 4000,
     refetchOnWindowFocus: true,
@@ -26,13 +47,14 @@ export function useItems() {
 // cache plumbing live in the defaults registered by createAppQueryClient,
 // so mutations queued offline can be dehydrated and resumed after a reload.
 
-export function useAddItem() {
+export function useAddItem(listId: string) {
   const m = useMutation<{ item: Item; revived: boolean }, Error, AddVars>({
     mutationKey: ['addItem'],
   })
   return {
     ...m,
-    mutate: (name: string) => m.mutate({ id: crypto.randomUUID(), name }),
+    mutate: (name: string) =>
+      m.mutate({ listId, id: crypto.randomUUID(), name }),
   }
 }
 
@@ -43,15 +65,43 @@ export function useUpdateItem() {
 }
 
 export function useDeleteItem() {
-  return useMutation<void, Error, string>({ mutationKey: ['deleteItem'] })
+  return useMutation<void, Error, DeleteVars>({ mutationKey: ['deleteItem'] })
 }
 
 export function useClearChecked() {
-  return useMutation<{ deleted: number }, Error, void>({
+  return useMutation<{ deleted: number }, Error, ClearVars>({
     mutationKey: ['clearChecked'],
   })
 }
 
-export function getCachedItems(client: QueryClient): Item[] {
-  return client.getQueryData<Item[]>(ITEMS_KEY) ?? []
+export function useAddList() {
+  const m = useMutation<{ list: ListInfo }, Error, AddListVars>({
+    mutationKey: ['addList'],
+  })
+  return {
+    ...m,
+    // Returns the client-generated id so the caller can navigate to the new
+    // list immediately (navigation stays out of mutation callbacks, §13).
+    mutate: (name: string) => {
+      const id = crypto.randomUUID()
+      m.mutate({ id, name })
+      return id
+    },
+  }
+}
+
+export function useRenameList() {
+  return useMutation<{ list: ListInfo }, Error, RenameListVars>({
+    mutationKey: ['renameList'],
+  })
+}
+
+export function useDeleteList() {
+  return useMutation<void, Error, DeleteListVars>({
+    mutationKey: ['deleteList'],
+  })
+}
+
+export function getCachedItems(client: QueryClient, listId: string): Item[] {
+  return client.getQueryData<Item[]>(itemsKey(listId)) ?? []
 }

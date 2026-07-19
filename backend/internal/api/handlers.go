@@ -14,18 +14,34 @@ type handlers struct {
 	store *store.Store
 }
 
-func (h *handlers) listItems(w http.ResponseWriter, r *http.Request) {
-	items, err := h.store.List(r.Context())
+func (h *handlers) listLists(w http.ResponseWriter, r *http.Request) {
+	lists, err := h.store.ListLists(r.Context())
 	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writeJSON(w, http.StatusOK, map[string]any{"lists": lists})
 }
 
-func (h *handlers) createItem(w http.ResponseWriter, r *http.Request) {
+func (h *handlers) createList(w http.ResponseWriter, r *http.Request) {
+	name, id, ok := decodeNameAndID(w, r, "list")
+	if !ok {
+		return
+	}
+	list, err := h.store.CreateList(r.Context(), name, id)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"list": list})
+}
+
+func (h *handlers) updateList(w http.ResponseWriter, r *http.Request) {
+	listID, ok := pathUUID(w, r, "listId", "list")
+	if !ok {
+		return
+	}
 	var req struct {
-		ID   string `json:"id"`
 		Name string `json:"name"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -37,18 +53,49 @@ func (h *handlers) createItem(w http.ResponseWriter, r *http.Request) {
 		invalid(w, "name must not be blank")
 		return
 	}
-	// Offline clients supply their own id so mutations queued behind the
-	// create can reference the item before the response arrives.
-	var id *string
-	if req.ID != "" {
-		if _, err := uuid.Parse(req.ID); err != nil {
-			badRequest(w, "invalid item id")
-			return
-		}
-		id = &req.ID
+	list, err := h.store.RenameList(r.Context(), listID, name)
+	if err != nil {
+		writeStoreError(w, err)
+		return
 	}
+	writeJSON(w, http.StatusOK, map[string]any{"list": list})
+}
 
-	item, created, revived, err := h.store.CreateOrRevive(r.Context(), name, id)
+func (h *handlers) deleteList(w http.ResponseWriter, r *http.Request) {
+	listID, ok := pathUUID(w, r, "listId", "list")
+	if !ok {
+		return
+	}
+	if err := h.store.DeleteList(r.Context(), listID); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *handlers) listItems(w http.ResponseWriter, r *http.Request) {
+	listID, ok := pathUUID(w, r, "listId", "list")
+	if !ok {
+		return
+	}
+	items, err := h.store.ListItems(r.Context(), listID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (h *handlers) createItem(w http.ResponseWriter, r *http.Request) {
+	listID, ok := pathUUID(w, r, "listId", "list")
+	if !ok {
+		return
+	}
+	name, id, ok := decodeNameAndID(w, r, "item")
+	if !ok {
+		return
+	}
+	item, created, revived, err := h.store.CreateOrRevive(r.Context(), listID, name, id)
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -61,7 +108,11 @@ func (h *handlers) createItem(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) updateItem(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathUUID(w, r)
+	listID, ok := pathUUID(w, r, "listId", "list")
+	if !ok {
+		return
+	}
+	id, ok := pathUUID(w, r, "id", "item")
 	if !ok {
 		return
 	}
@@ -100,7 +151,7 @@ func (h *handlers) updateItem(w http.ResponseWriter, r *http.Request) {
 		params.Reorder = &target
 	}
 
-	item, err := h.store.Update(r.Context(), id, params)
+	item, err := h.store.Update(r.Context(), listID, id, params)
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -109,11 +160,15 @@ func (h *handlers) updateItem(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) deleteItem(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathUUID(w, r)
+	listID, ok := pathUUID(w, r, "listId", "list")
 	if !ok {
 		return
 	}
-	if err := h.store.Delete(r.Context(), id); err != nil {
+	id, ok := pathUUID(w, r, "id", "item")
+	if !ok {
+		return
+	}
+	if err := h.store.Delete(r.Context(), listID, id); err != nil {
 		writeStoreError(w, err)
 		return
 	}
@@ -121,11 +176,15 @@ func (h *handlers) deleteItem(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) clearChecked(w http.ResponseWriter, r *http.Request) {
+	listID, ok := pathUUID(w, r, "listId", "list")
+	if !ok {
+		return
+	}
 	if r.URL.Query().Get("checked") != "true" {
 		badRequest(w, "bulk delete requires ?checked=true")
 		return
 	}
-	deleted, err := h.store.ClearChecked(r.Context())
+	deleted, err := h.store.ClearChecked(r.Context(), listID)
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -141,14 +200,44 @@ func (h *handlers) healthz(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-// pathUUID extracts and validates the {id} path segment.
-func pathUUID(w http.ResponseWriter, r *http.Request) (string, bool) {
-	id := r.PathValue("id")
+// pathUUID extracts and validates a uuid path segment; what names the entity
+// in the error message ("list", "item").
+func pathUUID(w http.ResponseWriter, r *http.Request, segment, what string) (string, bool) {
+	id := r.PathValue(segment)
 	if _, err := uuid.Parse(id); err != nil {
-		badRequest(w, "invalid item id")
+		badRequest(w, "invalid "+what+" id")
 		return "", false
 	}
 	return id, true
+}
+
+// decodeNameAndID parses the shared create body: a required name (trimmed,
+// not blank) and an optional client-generated uuid — offline clients supply
+// their own id so mutations queued behind the create can reference the row
+// before the response arrives (§13).
+func decodeNameAndID(w http.ResponseWriter, r *http.Request, what string) (string, *string, bool) {
+	var req struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		badRequest(w, "malformed JSON body")
+		return "", nil, false
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		invalid(w, "name must not be blank")
+		return "", nil, false
+	}
+	var id *string
+	if req.ID != "" {
+		if _, err := uuid.Parse(req.ID); err != nil {
+			badRequest(w, "invalid "+what+" id")
+			return "", nil, false
+		}
+		id = &req.ID
+	}
+	return name, id, true
 }
 
 // neighborID parses a before/after value: JSON null → nil (section edge),

@@ -23,10 +23,12 @@ if (!window.localStorage) {
 }
 
 // The persister writes the query cache + mutation queue to localStorage;
-// clear it (and any simulated offline state) so tests stay isolated.
+// clear it (and any simulated offline state) so tests stay isolated. Reset
+// the URL too, or a test that navigated leaks its path into the next render.
 afterEach(() => {
   window.localStorage.clear()
   onlineManager.setOnline(true)
+  window.history.replaceState(null, '', '/')
 })
 
 // jsdom gaps: pointer capture, scrollIntoView, PointerEvent, matchMedia.
