@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -62,17 +63,21 @@ func New(t *testing.T) *pgxpool.Pool {
 	}
 	t.Cleanup(pool.Close)
 
-	migration, err := os.ReadFile(migrationPath(t))
-	if err != nil {
-		t.Fatalf("read migration: %v", err)
-	}
-	if _, err := pool.Exec(ctx, string(migration)); err != nil {
-		t.Fatalf("apply migration: %v", err)
+	for _, path := range migrationPaths(t) {
+		migration, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read migration: %v", err)
+		}
+		if _, err := pool.Exec(ctx, string(migration)); err != nil {
+			t.Fatalf("apply migration %s: %v", filepath.Base(path), err)
+		}
 	}
 	return pool
 }
 
-func migrationPath(t *testing.T) string {
+// migrationPaths returns every up-migration in order; the NNNNNN_ filename
+// prefix makes a lexical sort the application order.
+func migrationPaths(t *testing.T) []string {
 	t.Helper()
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
@@ -80,5 +85,10 @@ func migrationPath(t *testing.T) string {
 	}
 	// backend/internal/testdb/testdb.go → db/migrations/…
 	root := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(thisFile))))
-	return filepath.Join(root, "db", "migrations", "000001_create_items.up.sql")
+	paths, err := filepath.Glob(filepath.Join(root, "db", "migrations", "*.up.sql"))
+	if err != nil || len(paths) == 0 {
+		t.Fatalf("locate migrations: %v", err)
+	}
+	sort.Strings(paths)
+	return paths
 }

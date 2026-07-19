@@ -9,15 +9,17 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// List returns all items in display order: unchecked by position, created_at,
-// id, then checked by name (citext, case-insensitive).
-func (s *Store) List(ctx context.Context) ([]Item, error) {
+// ListItems returns a list's items in display order: unchecked by position,
+// created_at, id, then checked by name (citext, case-insensitive).
+// ErrListNotFound distinguishes a missing list from an empty one.
+func (s *Store) ListItems(ctx context.Context, listID string) ([]Item, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT `+itemColumns+` FROM items
+		WHERE list_id = $1::uuid
 		ORDER BY checked,
 		         CASE WHEN NOT checked THEN position END,
 		         CASE WHEN checked THEN name END,
-		         created_at, id`)
+		         created_at, id`, listID)
 	if err != nil {
 		return nil, err
 	}
@@ -31,23 +33,35 @@ func (s *Store) List(ctx context.Context) ([]Item, error) {
 		}
 		items = append(items, it)
 	}
-	return items, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
+		exists, err := s.listExists(ctx, listID)
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			return nil, ErrListNotFound
+		}
+	}
+	return items, nil
 }
 
 // CreateOrRevive implements the POST semantics (§6): insert a new item at the
-// bottom of the list; if the name already exists and is checked, uncheck it
-// (revived=true); if it exists unchecked, no-op. All in one transaction so
-// concurrent adds of the same name converge to one row. A nil id lets the
-// database generate one; offline clients pass their own uuid.
-func (s *Store) CreateOrRevive(ctx context.Context, name string, id *string) (item Item, created, revived bool, err error) {
+// bottom of the list; if the name already exists in this list and is checked,
+// uncheck it (revived=true); if it exists unchecked, no-op. All in one
+// transaction so concurrent adds of the same name converge to one row. A nil
+// id lets the database generate one; offline clients pass their own uuid.
+func (s *Store) CreateOrRevive(ctx context.Context, listID, name string, id *string) (item Item, created, revived bool, err error) {
 	err = pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		// New item: max(position) over ALL items + 1024 (§3).
+		// New item: max(position) over ALL items in the list + 1024 (§3).
 		row := tx.QueryRow(ctx, `
-			INSERT INTO items (id, name, position)
-			VALUES (COALESCE($3::uuid, gen_random_uuid()), $1,
-			        (SELECT COALESCE(MAX(position), 0) + $2 FROM items))
-			ON CONFLICT (name) DO NOTHING
-			RETURNING `+itemColumns, name, float64(positionGap), id)
+			INSERT INTO items (id, list_id, name, position)
+			VALUES (COALESCE($4::uuid, gen_random_uuid()), $1::uuid, $2,
+			        (SELECT COALESCE(MAX(position), 0) + $3 FROM items WHERE list_id = $1::uuid))
+			ON CONFLICT (list_id, name) DO NOTHING
+			RETURNING `+itemColumns, listID, name, float64(positionGap), id)
 		item, err = scanItem(row)
 		if err == nil {
 			created = true
@@ -57,8 +71,9 @@ func (s *Store) CreateOrRevive(ctx context.Context, name string, id *string) (it
 			return err
 		}
 
-		row = tx.QueryRow(ctx,
-			`SELECT `+itemColumns+` FROM items WHERE name = $1 FOR UPDATE`, name)
+		row = tx.QueryRow(ctx, `
+			SELECT `+itemColumns+` FROM items
+			WHERE list_id = $1::uuid AND name = $2 FOR UPDATE`, listID, name)
 		item, err = scanItem(row)
 		if err == pgx.ErrNoRows {
 			// The conflicting row was deleted between the two statements;
@@ -78,9 +93,12 @@ func (s *Store) CreateOrRevive(ctx context.Context, name string, id *string) (it
 		}
 		return err
 	})
+	if isForeignKeyViolation(err) {
+		return Item{}, false, false, ErrListNotFound
+	}
 	if isUniqueViolation(err) {
 		// A client-supplied id colliding with an existing row under a
-		// different name escapes ON CONFLICT (name) as a PK violation.
+		// different name escapes ON CONFLICT (list_id, name) as a PK violation.
 		return Item{}, false, false, ErrNameConflict
 	}
 	return item, created, revived, err
@@ -93,12 +111,14 @@ type UpdateParams struct {
 }
 
 // Update applies rename, check/uncheck, and/or reorder atomically. Checking
-// or unchecking never modifies position (§3); only a reorder does.
-func (s *Store) Update(ctx context.Context, id string, p UpdateParams) (Item, error) {
+// or unchecking never modifies position (§3); only a reorder does. An id that
+// exists under a different list is ErrNotFound (§6: list membership check).
+func (s *Store) Update(ctx context.Context, listID, id string, p UpdateParams) (Item, error) {
 	var item Item
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		row := tx.QueryRow(ctx,
-			`SELECT `+itemColumns+` FROM items WHERE id = $1::uuid FOR UPDATE`, id)
+		row := tx.QueryRow(ctx, `
+			SELECT `+itemColumns+` FROM items
+			WHERE id = $1::uuid AND list_id = $2::uuid FOR UPDATE`, id, listID)
 		current, err := scanItem(row)
 		if err == pgx.ErrNoRows {
 			return ErrNotFound
@@ -117,7 +137,7 @@ func (s *Store) Update(ctx context.Context, id string, p UpdateParams) (Item, er
 		}
 		position := current.Position
 		if p.Reorder != nil {
-			position, err = computePosition(ctx, tx, id, *p.Reorder)
+			position, err = computePosition(ctx, tx, listID, id, *p.Reorder)
 			if err != nil {
 				return err
 			}
@@ -139,8 +159,9 @@ func (s *Store) Update(ctx context.Context, id string, p UpdateParams) (Item, er
 }
 
 // Delete removes one item permanently.
-func (s *Store) Delete(ctx context.Context, id string) error {
-	tag, err := s.pool.Exec(ctx, `DELETE FROM items WHERE id = $1::uuid`, id)
+func (s *Store) Delete(ctx context.Context, listID, id string) error {
+	tag, err := s.pool.Exec(ctx,
+		`DELETE FROM items WHERE id = $1::uuid AND list_id = $2::uuid`, id, listID)
 	if err != nil {
 		return err
 	}
@@ -150,11 +171,22 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
-// ClearChecked deletes all checked items and reports how many were removed.
-func (s *Store) ClearChecked(ctx context.Context) (int64, error) {
-	tag, err := s.pool.Exec(ctx, `DELETE FROM items WHERE checked`)
+// ClearChecked deletes a list's checked items and reports how many were
+// removed. ErrListNotFound if the list itself is gone.
+func (s *Store) ClearChecked(ctx context.Context, listID string) (int64, error) {
+	tag, err := s.pool.Exec(ctx,
+		`DELETE FROM items WHERE checked AND list_id = $1::uuid`, listID)
 	if err != nil {
 		return 0, err
+	}
+	if tag.RowsAffected() == 0 {
+		exists, err := s.listExists(ctx, listID)
+		if err != nil {
+			return 0, err
+		}
+		if !exists {
+			return 0, ErrListNotFound
+		}
 	}
 	return tag.RowsAffected(), nil
 }
@@ -170,4 +202,9 @@ func (s *Store) Ping(ctx context.Context) error {
 func isUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
+
+func isForeignKeyViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23503"
 }

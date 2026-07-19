@@ -8,14 +8,15 @@ import { getCachedItems, useAddItem } from '../api/hooks'
 import { findByName } from '../api/sort'
 
 interface AddItemBarProps {
+  listId: string
   // Fired when the typed name already exists unchecked: highlight that row
   // instead of duplicating (§2).
   onDuplicate: (id: string) => void
 }
 
-export default function AddItemBar({ onDuplicate }: AddItemBarProps) {
+export default function AddItemBar({ listId, onDuplicate }: AddItemBarProps) {
   const [text, setText] = useState('')
-  const addItem = useAddItem()
+  const addItem = useAddItem(listId)
   const client = useQueryClient()
 
   const submit = () => {
@@ -23,7 +24,7 @@ export default function AddItemBar({ onDuplicate }: AddItemBarProps) {
     if (!name) return
     setText('') // input clears and keeps focus so several items can be added in a row
 
-    const existing = findByName(getCachedItems(client), name)
+    const existing = findByName(getCachedItems(client, listId), name)
     if (existing && !existing.checked) {
       onDuplicate(existing.id)
       return

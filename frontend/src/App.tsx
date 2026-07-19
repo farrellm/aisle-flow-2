@@ -1,52 +1,32 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Alert from '@mui/material/Alert'
-import Container from '@mui/material/Container'
 import CssBaseline from '@mui/material/CssBaseline'
 import Snackbar from '@mui/material/Snackbar'
 import { ThemeProvider } from '@mui/material/styles'
 import useMediaQuery from '@mui/material/useMediaQuery'
 import { createSyncStoragePersister } from '@tanstack/query-sync-storage-persister'
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client'
+import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import { onAppError } from './api/notify'
-import { createAppQueryClient, ITEMS_KEY } from './api/queryClient'
+import { createAppQueryClient, LISTS_KEY } from './api/queryClient'
 import { buildTheme } from './theme'
-import AddItemBar from './components/AddItemBar'
-import ShoppingList from './components/ShoppingList'
-import TopBar from './components/TopBar'
+import ListScreen from './components/ListScreen'
+import RootRedirect from './components/RootRedirect'
 
-const FLASH_DURATION_MS = 2000
-
-function AppContent() {
+function ErrorSnackbar() {
   const [error, setError] = useState<string | null>(null)
-  const [flashId, setFlashId] = useState<string | null>(null)
-  const flashTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
-
   useEffect(() => onAppError(setError), [])
-
-  const flash = (id: string) => {
-    clearTimeout(flashTimer.current)
-    setFlashId(id)
-    flashTimer.current = setTimeout(() => setFlashId(null), FLASH_DURATION_MS)
-  }
-
   return (
-    <>
-      <TopBar />
-      <Container maxWidth="sm" disableGutters sx={{ maxWidth: 600, pb: 8 }}>
-        <AddItemBar onDuplicate={flash} />
-        <ShoppingList flashId={flashId} />
-      </Container>
-      <Snackbar
-        open={!!error}
-        autoHideDuration={5000}
-        onClose={() => setError(null)}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-      >
-        <Alert severity="error" onClose={() => setError(null)}>
-          {error}
-        </Alert>
-      </Snackbar>
-    </>
+    <Snackbar
+      open={!!error}
+      autoHideDuration={5000}
+      onClose={() => setError(null)}
+      anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+    >
+      <Alert severity="error" onClose={() => setError(null)}>
+        {error}
+      </Alert>
+    </Snackbar>
   )
 }
 
@@ -74,15 +54,25 @@ export default function App() {
         persistOptions={{
           persister,
           maxAge: 7 * 24 * 60 * 60 * 1000,
-          buster: 'v1',
+          // v2: multiple lists — the v1 cache (and any queued v1-format
+          // mutations) is discarded once at upgrade (§13).
+          buster: 'v2',
         }}
         onSuccess={() =>
-          queryClient
-            .resumePausedMutations()
-            .then(() => queryClient.invalidateQueries({ queryKey: ITEMS_KEY }))
+          queryClient.resumePausedMutations().then(() => {
+            queryClient.invalidateQueries({ queryKey: LISTS_KEY })
+            // Prefix-matches every ['items', listId] query.
+            queryClient.invalidateQueries({ queryKey: ['items'] })
+          })
         }
       >
-        <AppContent />
+        <BrowserRouter>
+          <Routes>
+            <Route path="/l/:listId" element={<ListScreen />} />
+            <Route path="*" element={<RootRedirect />} />
+          </Routes>
+          <ErrorSnackbar />
+        </BrowserRouter>
       </PersistQueryClientProvider>
     </ThemeProvider>
   )

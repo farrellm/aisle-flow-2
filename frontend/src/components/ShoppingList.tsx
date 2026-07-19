@@ -16,8 +16,13 @@ function CenteredNote({ children }: { children: React.ReactNode }) {
   )
 }
 
-export default function ShoppingList({ flashId }: { flashId: string | null }) {
-  const { data: items, isPending } = useItems()
+interface ShoppingListProps {
+  listId: string
+  flashId: string | null
+}
+
+export default function ShoppingList({ listId, flashId }: ShoppingListProps) {
+  const { data: items, isPending } = useItems(listId)
   const updateItem = useUpdateItem()
   const deleteItem = useDeleteItem()
 
@@ -33,12 +38,14 @@ export default function ShoppingList({ flashId }: { flashId: string | null }) {
 
   const handleToggle = (item: Item) =>
     updateItem.mutate({
+      listId: item.listId,
       id: item.id,
       patch: { checked: !item.checked },
       optimistic: { checked: !item.checked },
     })
 
-  const handleDelete = (item: Item) => deleteItem.mutate(item.id)
+  const handleDelete = (item: Item) =>
+    deleteItem.mutate({ listId: item.listId, id: item.id })
 
   if (unchecked.length === 0 && checked.length === 0) {
     return <CenteredNote>Your list is empty — add your first item above</CenteredNote>

@@ -1,15 +1,17 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { onlineManager } from '@tanstack/react-query'
 import App from '../App'
-import { db, makeItem, resetDb, server } from './server'
+import { db, DEFAULT_LIST_ID, makeItem, resetDb, server } from './server'
 
 beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
+beforeEach(() => window.history.pushState(null, '', `/l/${DEFAULT_LIST_ID}`))
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
 
-const posts = () => db.requests.filter((r) => r.startsWith('POST'))
+// Item adds only; a list POST would also start with "POST".
+const posts = () => db.requests.filter((r) => r.startsWith(`POST ${DEFAULT_LIST_ID}`))
 
 describe('offline mutation queue', () => {
   it('queues an add while offline and replays it on reconnect', async () => {
@@ -42,7 +44,9 @@ describe('offline mutation queue', () => {
     resetDb([])
     render(<App />)
     // Let the initial fetch land before cutting the connection.
-    await waitFor(() => expect(db.requests).toContain('GET /api/items'))
+    await waitFor(() =>
+      expect(db.requests).toContain(`GET items ${DEFAULT_LIST_ID}`),
+    )
 
     act(() => onlineManager.setOnline(false))
     const user = userEvent.setup()
@@ -60,7 +64,7 @@ describe('offline mutation queue', () => {
       expect(writes).toHaveLength(2)
     })
     const writes = db.requests.filter((r) => !r.startsWith('GET'))
-    expect(writes[0]).toBe('POST Eggs')
+    expect(writes[0]).toBe(`POST ${DEFAULT_LIST_ID} Eggs`)
     // The PATCH targets the id the POST created, i.e. the client uuid.
     const eggs = db.items.find((i) => i.name === 'Eggs')!
     expect(writes[1]).toContain(`PATCH ${eggs.id}`)
