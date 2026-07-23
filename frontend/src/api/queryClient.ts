@@ -29,7 +29,18 @@ export function applyReorderOptimistic(
   id: string,
   position: number,
 ) {
-  client.setQueryData<Item[]>(itemsKey(listId), (items = []) =>
+  const key = itemsKey(listId)
+  // Abort any in-flight items poll *synchronously*, here at drop time, before
+  // writing the optimistic order. A background poll (started up to a refetch
+  // interval earlier, so carrying the pre-drop order) can otherwise resolve in
+  // the gap between this write and the mutation's own cancelQueries in
+  // onMutate, landing its stale result on top of the new order for a frame —
+  // an intermittent flash of the original order after a drop. The mutation's
+  // onSettled invalidate still refetches the server-authoritative order after.
+  // { revert: false }: keep this optimistic write, don't roll back to the
+  // aborted poll's pre-fetch snapshot.
+  client.cancelQueries({ queryKey: key }, { revert: false })
+  client.setQueryData<Item[]>(key, (items = []) =>
     items.map((i) => (i.id === id ? { ...i, position } : i)),
   )
 }
