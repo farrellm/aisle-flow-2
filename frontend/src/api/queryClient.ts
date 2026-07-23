@@ -1,4 +1,4 @@
-import { QueryClient } from '@tanstack/react-query'
+import { notifyManager, QueryClient } from '@tanstack/react-query'
 import { api, ApiError } from './client'
 import { notifyAppError } from './notify'
 import { findByName, maxPosition } from './sort'
@@ -6,6 +6,33 @@ import type { Item, ListInfo, UpdatePatch } from './types'
 
 export const LISTS_KEY = ['lists'] as const
 export const itemsKey = (listId: string) => ['items', listId] as const
+
+// Flush query-cache change notifications synchronously instead of on TanStack's
+// default setTimeout(0) macrotask. An optimistic cache write made inside a DOM
+// event handler (the drag-drop reorder) must re-render the list in the *same*
+// commit as dnd-kit's synchronous drag-transform reset; the default scheduler
+// defers the re-render to a later macrotask (after paint), so the row renders
+// at its old slot for a few frames first — the drop flicker. Synchronous
+// scheduling lets React batch the cache-driven re-render with the drop.
+notifyManager.setScheduler((cb) => cb())
+
+// Synchronous optimistic reorder: mirror the ['updateItem'] onMutate position
+// write into the cache from within the drop's event handler so the new order
+// commits in the same React frame that dnd-kit clears its drag transform.
+// Deferring it to the mutation lifecycle (a later microtask) leaves the row at
+// its old slot for a frame first — the visible "jump" (§3/§7). Persistence
+// still flows through the ['updateItem'] mutation; its onMutate re-applies the
+// same position idempotently and owns offline-resume.
+export function applyReorderOptimistic(
+  client: QueryClient,
+  listId: string,
+  id: string,
+  position: number,
+) {
+  client.setQueryData<Item[]>(itemsKey(listId), (items = []) =>
+    items.map((i) => (i.id === id ? { ...i, position } : i)),
+  )
+}
 
 // Every item-mutation vars object carries listId: vars are what the
 // persister serializes, so a mutation resumed after a reload must be able to
