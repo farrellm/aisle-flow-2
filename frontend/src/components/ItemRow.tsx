@@ -34,6 +34,12 @@ export default function ItemRow({ item, sortable, flash, onToggle, onDelete }: I
   } = useSortable({
     id: item.id,
     disabled: !sortable || swipe.swiping || swipe.revealed,
+    // Skip dnd-kit's post-drop FLIP layout animation: the synchronous reorder
+    // in handleDragEnd (queryClient.applyReorderOptimistic) already lands the
+    // row in its correct slot on drop, so the FLIP only adds a spurious slide
+    // that reads as an upward "jump" on up-drags. The during-drag make-room
+    // animation is driven by isSorting, not this flag, so it is unaffected.
+    animateLayoutChanges: () => false,
   })
 
   useEffect(() => {

@@ -17,8 +17,10 @@ import {
   restrictToVerticalAxis,
 } from '@dnd-kit/modifiers'
 import List from '@mui/material/List'
+import { useQueryClient } from '@tanstack/react-query'
 import { setDragging } from '../api/notify'
 import { useUpdateItem } from '../api/hooks'
+import { applyReorderOptimistic } from '../api/queryClient'
 import { planReorder } from '../api/reorder'
 import type { Item } from '../api/types'
 import ItemRow from './ItemRow'
@@ -32,6 +34,7 @@ interface UncheckedListProps {
 
 export default function UncheckedList({ items, flashId, onToggle, onDelete }: UncheckedListProps) {
   const updateItem = useUpdateItem()
+  const client = useQueryClient()
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -44,6 +47,11 @@ export default function UncheckedList({ items, flashId, onToggle, onDelete }: Un
     if (!moved) return
     const plan = planReorder(items, moved.id, String(over.id))
     if (!plan) return
+    // Write the reordered position to the cache synchronously so the list
+    // re-renders in the same commit as dnd-kit's drag-transform reset (the
+    // query client flushes notifications synchronously — see queryClient.ts —
+    // so no flushSync is needed here).
+    applyReorderOptimistic(client, moved.listId, moved.id, plan.position)
     updateItem.mutate({
       listId: moved.listId,
       id: moved.id,
