@@ -17,7 +17,7 @@ ss -tlnp | grep -E '5174|8081'                                # frontend / backe
 - Full stack from cold: `make dev` (db + migrate + backend + frontend).
 - DB already up: `make -j2 backend frontend` (run in background).
 - Frontend: Vite on **http://localhost:5174** (not 5173 — that may be another project), proxies `/api` → backend on **8081**.
-- Ready check: `curl -sf http://localhost:8081/api/items`.
+- Ready check: `curl -sf http://localhost:8081/api/lists` (items are list-scoped: `/api/lists/{listId}/items`; the UI lives at `/l/{listId}`).
 
 ## Drive
 
