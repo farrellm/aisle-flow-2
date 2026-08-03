@@ -130,18 +130,4 @@ export const server = setupServer(
     )
     return new HttpResponse(null, { status: 204 })
   }),
-  http.delete('/api/lists/:listId/items', ({ params, request }) => {
-    if (new URL(request.url).searchParams.get('checked') !== 'true') {
-      return HttpResponse.json(
-        { error: { code: 'bad_request', message: 'requires ?checked=true' } },
-        { status: 400 },
-      )
-    }
-    db.requests.push(`DELETE checked ${params.listId}`)
-    const deleted = db.items.filter(
-      (i) => i.listId === params.listId && i.checked,
-    ).length
-    db.items = db.items.filter((i) => i.listId !== params.listId || !i.checked)
-    return HttpResponse.json({ deleted })
-  }),
 )

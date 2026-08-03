@@ -182,13 +182,6 @@ func TestErrorResponses(t *testing.T) {
 	}
 	assertErrorEnvelope(t, body, "not_found")
 
-	// Bulk delete without the guard param (§6).
-	res, body = do(t, "DELETE", itemsURL, nil)
-	if res.StatusCode != http.StatusBadRequest {
-		t.Fatalf("guardless bulk delete status = %d, want 400", res.StatusCode)
-	}
-	assertErrorEnvelope(t, body, "bad_request")
-
 	// Rename collision → 409.
 	do(t, "POST", itemsURL, map[string]string{"name": "Milk"})
 	_, second := do(t, "POST", itemsURL, map[string]string{"name": "Bread"})
@@ -198,23 +191,6 @@ func TestErrorResponses(t *testing.T) {
 		t.Fatalf("rename conflict status = %d, want 409", res.StatusCode)
 	}
 	assertErrorEnvelope(t, body, "conflict")
-}
-
-func TestClearChecked(t *testing.T) {
-	_, itemsURL := newServer(t)
-
-	_, a := do(t, "POST", itemsURL, map[string]string{"name": "A"})
-	do(t, "POST", itemsURL, map[string]string{"name": "B"})
-	aID := a["item"].(map[string]any)["id"].(string)
-	do(t, "PATCH", itemsURL+"/"+aID, map[string]any{"checked": true})
-
-	res, body := do(t, "DELETE", itemsURL+"?checked=true", nil)
-	if res.StatusCode != http.StatusOK {
-		t.Fatalf("clear status = %d, want 200", res.StatusCode)
-	}
-	if body["deleted"] != float64(1) {
-		t.Fatalf("deleted = %v, want 1", body["deleted"])
-	}
 }
 
 func TestListLifecycle(t *testing.T) {

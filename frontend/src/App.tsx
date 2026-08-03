@@ -54,9 +54,11 @@ export default function App() {
         persistOptions={{
           persister,
           maxAge: 7 * 24 * 60 * 60 * 1000,
-          // v2: multiple lists — the v1 cache (and any queued v1-format
-          // mutations) is discarded once at upgrade (§13).
-          buster: 'v2',
+          // v3: "clear checked" removed — a queued ['clearChecked'] mutation
+          // would resume with no registered default, rejecting
+          // resumePausedMutations and skipping the post-restore invalidates.
+          // Discarding the old cache once at upgrade avoids that (§13).
+          buster: 'v3',
         }}
         onSuccess={() =>
           queryClient.resumePausedMutations().then(() => {
