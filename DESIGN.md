@@ -144,7 +144,7 @@ List (top→bottom): Milk(1024) Bread(2048) Eggs(3072) Jam(4096).
 ```
 
 - **Development:** Vite dev server on `:5174` proxies `/api` to the Go server on `:8081` (no CORS needed). Postgres runs via `docker compose`, managed by `make`.
-- **Production (simple deployment):** `vite build` output is embedded in the Go binary with `embed.FS` and served by the same server that serves `/api` — one binary + one Postgres container. (SPA fallback: unknown non-`/api` paths serve `index.html`.) Hashed `assets/` are served `Cache-Control: immutable`; everything else (`index.html`, `sw.js`, manifest) is `no-cache` so service-worker updates roll out on the next visit.
+- **Production (simple deployment):** `vite build` output is embedded in the Go binary with `embed.FS` and served by the same server that serves `/api` — one binary + one Postgres container. (SPA fallback: unknown non-`/api` paths serve `index.html`.) Hashed `assets/` are served `Cache-Control: immutable`; everything else (`index.html`, `sw.js`, manifest) is `no-cache` so the next visit *notices* a new service worker (which then waits for the user to accept it, §13). Unmatched `/api/…` paths get the error envelope from a `/api/` guard rather than falling through to the SPA catch-all and answering `index.html` with a 200.
 - Concurrency model: last-write-wins on all mutations. No locking or versioning — acceptable at household scale, and the polling loop reconciles clients within seconds. The same property is what makes offline replay safe enough (§13).
 
 ---
@@ -453,9 +453,21 @@ aisle-flow/
 - Tests open on `/l/{DEFAULT_LIST_ID}` (via `history.pushState`) to skip the redirect, except the one asserting the `/` redirect; `setup.ts` resets `window.history` between tests.
 - Drag-and-drop ordering is verified through the `dragEnd` handler unit (given a drop index, the right `before`/`after` ids are sent) rather than simulating pointer events.
 
-### End-to-end (lightweight)
+### End-to-end (offline / PWA)
 
-A single happy-path script (Playwright, optional) run against `make dev`: add three items, reorder, check one, uncheck it, assert it returns to its slot, delete it.
+`make e2e` — Playwright (`frontend/e2e/`) against the **production** binary, because the service worker is disabled in dev and none of §13 Layer 1 exists under Vite. The target builds the binary, drops and re-migrates a dedicated `aisleflow_e2e` database, and serves it on port 8082, so a run never touches the dev database.
+
+Seven scenarios, each of which corresponds to a way the promise in §13 has been broken:
+
+1. **Warm offline load** — reload offline; the list renders from the persisted cache and the "Offline" chip shows.
+2. **Cold offline load** — localStorage wiped, worker installed; the shell comes from the precache and the data from the `api-items` runtime cache (the Layer 1 regression test).
+3. **Cold load with nothing cached** — the "check your connection" message, *not* an unresolving spinner.
+4. **Offline mutations** — add and check render optimistically, zero writes leave the tab, both dehydrate as paused mutations.
+5. **Reload while offline** — the optimistic state and the queue both survive; on reconnect the queue drains FIFO and the assertion is made against the *server*, not the DOM. This is also the regression test for Layer 1 clobbering Layer 2.
+6. **Offline navigation** — in-app list switching and a hard deep-link, served by `navigateFallback` with the server unreachable.
+7. **Dead uplink** — `/api/**` aborted while `navigator.onLine` stays `true`; the edit must stay on screen and queued, then replay once the route is restored.
+
+Two Playwright specifics are load-bearing and live in `e2e/helpers.ts`: `context.setOffline` does **not** set `navigator.onLine` on a freshly loaded document (so a `navigator.onLine` init-script shim is required, or the reload-while-offline test silently exercises the online path), and the worker must have finished precaching before the network is cut.
 
 ---
 
@@ -477,9 +489,11 @@ The app is installable and usable in a store with no reception: the shell and la
 
 `vite-plugin-pwa` in `generateSW` mode (config in `frontend/vite.config.ts`):
 
-- **Precache** of the built app shell (`registerType: 'autoUpdate'` — new versions activate silently on the next visit; `no-cache` headers on `sw.js`/`index.html` in §4 make that prompt).
-- **Runtime cache** for `GET /api/lists` and each list's `GET /api/lists/{id}/items`: `NetworkFirst` with a 3 s timeout, `maxEntries: 16` (room for the lists response plus several lists' items) — belt-and-braces for a cold SW-served load; the persisted query cache below is the primary offline data source.
-- Manifest + icons (rendered from `favicon.svg`); `devOptions.enabled: false` — dev stays SW-free, the worker is exercised against the prod build.
+- **Precache** of the built app shell (`registerType: 'prompt'` — a new version installs but *waits*; `UpdatePrompt` registers the worker via `useRegisterSW` and offers "A new version is available / Reload". `autoUpdate` was rejected: it implies `skipWaiting` + `clientsClaim`, so a deploy swaps hashed chunks under a page that is already running — mid-shop, offline, with unsent mutations queued is exactly when that must not happen. `no-cache` headers on `sw.js`/`index.html` in §4 still make the check prompt.)
+- **Runtime cache** for `GET /api/lists` and each list's `GET /api/lists/{id}/items`: `NetworkFirst` with a 3 s timeout, `maxEntries: 16` (room for the lists response plus several lists' items) — the **cold-start** data source, for a client whose localStorage is empty but whose worker is installed. Layer 2 below is the primary one.
+  - This cache can only answer a request that is actually made, so queries run `networkMode: 'offlineFirst'` (`queryClient.ts`); under the default `'online'` an offline query never fires and this whole layer is unreachable. Paired with `retry: false`, because an `offlineFirst` retry *pauses* while offline, leaving the query `pending` and the UI on a spinner that never resolves — failing is what lets the "check your connection" state render.
+  - **Layer 1 must never overwrite Layer 2.** A cached GET is older than the restored query cache by construction and is blind to writes still queued, so applying it would silently erase the user's unsent edits. Offline, therefore, the app fetches only to fill a gap and never to replace data it already has: `refetchOnMount` is gated on `query.state.data === undefined`, focus-refetch and the 4 s poll are gated on `onlineManager.isOnline()`, and the post-restore invalidate in `App.tsx` is skipped while offline.
+- Manifest (`id`/`scope` `/`) + icons (rendered from `favicon.svg`), plus an `apple-touch-icon` link in `index.html` — iOS ignores the manifest icons when adding to the home screen. `devOptions.enabled: false` — dev stays SW-free, the worker is exercised against the prod build (and by the e2e suite in §11).
 - The SW never sees mutations; queuing is the app's job (Workbox Background Sync was rejected: replies never reach the app, so the create response and optimistic reconciliation would be lost).
 
 ### Layer 2: mutation queue (TanStack Query paused mutations)
@@ -492,7 +506,8 @@ Requirements that follow, and where they live:
 - **listId lives in vars** — a resumed item mutation must know which list it targets; `listId` is part of every item-mutation's serialized vars (not a closure), so the default re-derives the `['items', listId]` key and the nested request URL.
 - **Client-generated ids (items and lists)** — an offline *add → check* chain (and an offline *new list → add items* chain) needs a usable id before the server replies, so `useAddItem`/`useAddList` generate the uuid (`crypto.randomUUID()`) and `POST /api/lists[/{id}/items]` accept it (§6). The optimistic id **is** the real id; no remapping.
 - **Replay ordering** — all list and item mutations share one scope (`scope: { id: 'items' }`), so the queue replays serially in FIFO order; a *create-list* therefore always replays before adds into that list.
-- **Replay failure policy** — network errors retry (and re-pause if the connection drops again); HTTP `ApiError`s fail fast: the stale mutation drops out of the queue, `onSettled` invalidates, server truth wins. Covers a reorder whose neighbor vanished (404) and name conflicts (409).
+- **Replay failure policy** — `NetworkError`s (the request never reached the server) retry forever, which parks the mutation back in the paused queue rather than exhausting a retry budget; HTTP `ApiError`s fail fast: the stale mutation drops out of the queue, `onSettled` invalidates, server truth wins. Covers a reorder whose neighbor vanished (404) and name conflicts (409). The two are distinct classes in `api/client.ts` precisely so this policy can tell them apart.
+- **Unreachable counts as offline** — the hard case is not "no network", it is a network the browser thinks is fine: a captive portal, one bar of signal, a router that answers DHCP and routes nothing. `navigator.onLine` stays `true`, so nothing pauses the mutation; it would fire, fail, exhaust its retries and roll back, dropping the edit. So `client.ts` treats any unreachable request as offline (`onlineManager.setOnline(false)`), which parks the write with its optimistic state intact. Recovery has to be *probed* for — the browser never believed it was offline, so it fires no `online` event — hence a 4 s `GET /api/healthz` poll that runs until it answers. `/api/healthz` specifically: it is the one API path the service worker's runtime cache does not match, so it cannot be answered out of cache while the network is still dead.
 - **Rollback after reload** — the `onMutate` snapshot context doesn't survive a reload; `onError` falls back to invalidate-only, which is correct because the persisted cache already holds the optimistic state.
 - **Online state must be seeded** — `onlineManager` assumes online at startup and only reacts to window events, so a page *loaded* offline would fail mutations instead of queuing them; `main.tsx` seeds it from `navigator.onLine`. The TopBar shows an "Offline" chip driven by the same manager.
 

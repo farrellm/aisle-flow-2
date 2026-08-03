@@ -26,7 +26,10 @@ func Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/")
 		if path != "" {
-			if _, err := fs.Stat(dist, path); err == nil {
+			// Directories deliberately excluded: fs.Stat succeeds for them, so
+			// without the check `GET /assets` would serve a FileServer
+			// directory listing instead of falling through to the SPA.
+			if info, err := fs.Stat(dist, path); err == nil && !info.IsDir() {
 				w.Header().Set("Cache-Control", cacheControl(path))
 				fileServer.ServeHTTP(w, r)
 				return

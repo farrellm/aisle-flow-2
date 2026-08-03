@@ -5,6 +5,7 @@ import Snackbar from '@mui/material/Snackbar'
 import { ThemeProvider } from '@mui/material/styles'
 import useMediaQuery from '@mui/material/useMediaQuery'
 import { createSyncStoragePersister } from '@tanstack/query-sync-storage-persister'
+import { onlineManager } from '@tanstack/react-query'
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client'
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import { onAppError } from './api/notify'
@@ -12,6 +13,7 @@ import { createAppQueryClient, LISTS_KEY } from './api/queryClient'
 import { buildTheme } from './theme'
 import ListScreen from './components/ListScreen'
 import RootRedirect from './components/RootRedirect'
+import UpdatePrompt from './components/UpdatePrompt'
 
 function ErrorSnackbar() {
   const [error, setError] = useState<string | null>(null)
@@ -60,8 +62,18 @@ export default function App() {
           // Discarding the old cache once at upgrade avoids that (§13).
           buster: 'v3',
         }}
+        // .finally, not .then: one rejected mutation in the resumed queue must
+        // not swallow the reconciling invalidates (and leave an unhandled
+        // rejection behind) for all the others.
         onSuccess={() =>
-          queryClient.resumePausedMutations().then(() => {
+          queryClient.resumePausedMutations().finally(() => {
+            // Reconciling with the server is pointless offline and actively
+            // destructive: the only available answer is the service worker's
+            // older cached copy, which would overwrite the optimistic state we
+            // just restored — including writes still queued (§13). Coming back
+            // online re-runs the queue, and each mutation's onSettled
+            // invalidates then.
+            if (!onlineManager.isOnline()) return
             queryClient.invalidateQueries({ queryKey: LISTS_KEY })
             // Prefix-matches every ['items', listId] query.
             queryClient.invalidateQueries({ queryKey: ['items'] })
@@ -74,6 +86,7 @@ export default function App() {
             <Route path="*" element={<RootRedirect />} />
           </Routes>
           <ErrorSnackbar />
+          <UpdatePrompt />
         </BrowserRouter>
       </PersistQueryClientProvider>
     </ThemeProvider>
