@@ -8,14 +8,23 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: 'autoUpdate',
-      includeAssets: ['favicon.svg'],
+      // Prompt, not autoUpdate: autoUpdate implies skipWaiting + clientsClaim,
+      // so a deploy swaps hashed chunks under a page that is already running.
+      // Mid-shop, offline, with a queue of unsent mutations is exactly when
+      // that must not happen — UpdatePrompt lets the user pick the moment.
+      registerType: 'prompt',
+      // Registration lives in UpdatePrompt (useRegisterSW), so nothing should
+      // be injected into index.html.
+      injectRegister: null,
+      includeAssets: ['favicon.svg', 'apple-touch-icon-180x180.png'],
       manifest: {
+        id: '/',
         name: 'AisleFlow',
         short_name: 'AisleFlow',
         description: 'Shared grocery list',
         display: 'standalone',
         start_url: '/',
+        scope: '/',
         theme_color: '#1976d2',
         background_color: '#ffffff',
         icons: [
@@ -65,5 +74,7 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: './src/test/setup.ts',
+    // e2e/ is Playwright's (`make e2e`); vitest must not try to collect it.
+    include: ['src/**/*.{test,spec}.{ts,tsx}'],
   },
 })

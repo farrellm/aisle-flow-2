@@ -312,3 +312,26 @@ func TestHealthz(t *testing.T) {
 		t.Fatalf("healthz: status=%d body=%v", res.StatusCode, body)
 	}
 }
+
+// Unknown and wrong-method /api paths must stay inside the error envelope. The
+// SPA catch-all is registered at "/" in production, and without the /api/
+// guard these would fall through to it and answer index.html with a 200 —
+// which the frontend's fetch wrapper would parse as a successful response.
+func TestUnknownAPIPath(t *testing.T) {
+	srv, _ := newServer(t)
+
+	for _, tc := range []struct{ method, path string }{
+		{"GET", "/api/nope"},
+		{"GET", "/api/lists/x/y/z"},
+		{"PUT", "/api/lists"},
+	} {
+		res, body := do(t, tc.method, srv.URL+tc.path, nil)
+		if res.StatusCode != http.StatusNotFound {
+			t.Fatalf("%s %s status = %d, want 404", tc.method, tc.path, res.StatusCode)
+		}
+		if ct := res.Header.Get("Content-Type"); ct != "application/json" {
+			t.Fatalf("%s %s content-type = %q, want application/json", tc.method, tc.path, ct)
+		}
+		assertErrorEnvelope(t, body, "not_found")
+	}
+}

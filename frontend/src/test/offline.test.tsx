@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { http, HttpResponse } from 'msw'
 import { onlineManager } from '@tanstack/react-query'
 import App from '../App'
 import { db, DEFAULT_LIST_ID, makeItem, resetDb, server } from './server'
@@ -69,5 +70,41 @@ describe('offline mutation queue', () => {
     const eggs = db.items.find((i) => i.name === 'Eggs')!
     expect(writes[1]).toContain(`PATCH ${eggs.id}`)
     expect(eggs.checked).toBe(true)
+  })
+
+  // The failure mode that actually happens in a shop: one bar of signal, a
+  // captive portal, a router that hands out DHCP and routes nothing. The
+  // browser still reports online, so nothing pauses the mutation — it used to
+  // fire, exhaust its retries, roll back and drop the edit on the floor.
+  it('keeps an edit queued when requests fail but the browser still reports online', async () => {
+    resetDb([makeItem({ name: 'Milk' })])
+    render(<App />)
+    await screen.findByText('Milk')
+
+    server.use(
+      http.post('/api/lists/:listId/items', () => HttpResponse.error()),
+    )
+    expect(onlineManager.isOnline()).toBe(true)
+
+    const user = userEvent.setup()
+    await user.type(
+      screen.getByRole('textbox', { name: 'Add an item' }),
+      'Bread{Enter}',
+    )
+
+    // The app infers the network is gone and parks the write.
+    expect(await screen.findByText('Offline')).toBeInTheDocument()
+    expect(posts()).toHaveLength(0)
+
+    // The optimistic row survives — no rollback, no error snackbar.
+    expect(screen.getByText('Bread')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+
+    // Recovery: the e2e suite covers the /api/healthz probe against a real
+    // service worker; here we just assert the queue drains once online again.
+    server.resetHandlers()
+    act(() => onlineManager.setOnline(true))
+    await waitFor(() => expect(posts()).toHaveLength(1))
+    expect(db.items.some((i) => i.name === 'Bread')).toBe(true)
   })
 })

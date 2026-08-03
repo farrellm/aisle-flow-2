@@ -1,5 +1,5 @@
 import { notifyManager, QueryClient } from '@tanstack/react-query'
-import { api, ApiError } from './client'
+import { api, NetworkError } from './client'
 import { notifyAppError } from './notify'
 import { findByName, maxPosition } from './sort'
 import type { Item, ListInfo, UpdatePatch } from './types'
@@ -92,14 +92,26 @@ export function createAppQueryClient(): QueryClient {
       queries: {
         // Must outlive the persister's maxAge or restored queries are
         // garbage-collected before they can render.
-        gcTime: 24 * 60 * 60 * 1000,
+        gcTime: 7 * 24 * 60 * 60 * 1000,
+        // Run the query function even when we believe we are offline. Under
+        // the default 'online' an offline query never fires, which means the
+        // service worker's runtime cache (§13 Layer 1) is never consulted —
+        // it can only answer a request that is actually made.
+        networkMode: 'offlineFirst',
+        // ...and no retries, because an 'offlineFirst' retry *pauses* while
+        // offline, leaving the query pending forever and the UI on a spinner
+        // that never resolves. Failing lets the "check your connection" state
+        // render; the 4s poll in hooks.ts is the retry.
+        retry: false,
       },
       mutations: {
-        // Network errors (fetch TypeError) retry; HTTP errors (ApiError,
-        // e.g. a 404 for a reorder whose neighbor is gone) fail fast so a
-        // stale queued mutation drops out and the refetch reconciles.
-        retry: (failureCount, error) =>
-          !(error instanceof ApiError) && failureCount < 3,
+        // HTTP errors (ApiError — e.g. a 404 for a reorder whose neighbor is
+        // gone) fail fast so a stale queued mutation drops out and the refetch
+        // reconciles. A NetworkError never reached the server, so keep
+        // retrying: `request` has already marked us offline, so the retryer
+        // parks the mutation in the paused queue with its optimistic write
+        // intact rather than rolling it back (§13).
+        retry: (_failureCount, error) => error instanceof NetworkError,
         // Serialize list and item mutations in one queue so an offline
         // create-list → add → check chain replays in order.
         scope: { id: 'items' },

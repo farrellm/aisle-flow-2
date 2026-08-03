@@ -55,6 +55,9 @@ const listOr404 = (listId: string | readonly string[] | undefined) =>
   db.lists.find((l) => l.id === listId)
 
 export const server = setupServer(
+  // The reconnect probe in api/client.ts polls this while it believes the
+  // network is unreachable.
+  http.get('/api/healthz', () => HttpResponse.json({ status: 'ok' })),
   http.get('/api/lists', () => {
     db.requests.push('GET /api/lists')
     return HttpResponse.json({ lists: db.lists })
