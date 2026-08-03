@@ -171,26 +171,6 @@ func (s *Store) Delete(ctx context.Context, listID, id string) error {
 	return nil
 }
 
-// ClearChecked deletes a list's checked items and reports how many were
-// removed. ErrListNotFound if the list itself is gone.
-func (s *Store) ClearChecked(ctx context.Context, listID string) (int64, error) {
-	tag, err := s.pool.Exec(ctx,
-		`DELETE FROM items WHERE checked AND list_id = $1::uuid`, listID)
-	if err != nil {
-		return 0, err
-	}
-	if tag.RowsAffected() == 0 {
-		exists, err := s.listExists(ctx, listID)
-		if err != nil {
-			return 0, err
-		}
-		if !exists {
-			return 0, ErrListNotFound
-		}
-	}
-	return tag.RowsAffected(), nil
-}
-
 // Ping verifies connectivity and that the schema is present (§8: fail fast).
 func (s *Store) Ping(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)

@@ -11,7 +11,6 @@ import {
   LISTS_KEY,
   type AddListVars,
   type AddVars,
-  type ClearVars,
   type DeleteListVars,
   type DeleteVars,
   type RenameListVars,
@@ -66,12 +65,6 @@ export function useUpdateItem() {
 
 export function useDeleteItem() {
   return useMutation<void, Error, DeleteVars>({ mutationKey: ['deleteItem'] })
-}
-
-export function useClearChecked() {
-  return useMutation<{ deleted: number }, Error, ClearVars>({
-    mutationKey: ['clearChecked'],
-  })
 }
 
 export function useAddList() {
