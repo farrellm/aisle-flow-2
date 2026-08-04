@@ -27,7 +27,10 @@ export default defineConfig({
   webServer: {
     command: '../backend/server',
     url: `http://localhost:${PORT}/api/healthz`,
-    env: { PORT, DATABASE_URL },
+    // LISTEN_ADDR is cleared explicitly: Playwright merges this over
+    // process.env, and the deployed instance sets LISTEN_ADDR, so an exported
+    // one would override PORT and move the server off the port we poll.
+    env: { PORT, DATABASE_URL, LISTEN_ADDR: '' },
     reuseExistingServer: false,
     stdout: 'pipe',
     stderr: 'pipe',

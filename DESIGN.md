@@ -343,7 +343,7 @@ backend/
 
 - **Position logic lives in `store`**, executed inside transactions: `Update` with a reorder reads the neighbors' positions `FOR UPDATE`, computes the midpoint, renormalizes if the gap is exhausted, and writes — atomically. Handlers never touch position math. Every store method is scoped to a `listID`; the reorder/renormalize SQL filters by `list_id` so one list can never disturb another's positions.
 - **Last-list guard lives in the store:** `DeleteList` runs in a transaction that locks all list rows `FOR UPDATE`, so the "you can't delete the only list" check is race-free.
-- **Config via env vars:** `DATABASE_URL` (default `postgres://aisleflow:aisleflow@localhost:5432/aisleflow?sslmode=disable`), `PORT` (default `8081`). No config files.
+- **Config via env vars:** `DATABASE_URL` (default `postgres://aisleflow:aisleflow@localhost:5434/aisleflow?sslmode=disable`), `PORT` (default `8081`), `LISTEN_ADDR` (default `:$PORT` — every interface). `LISTEN_ADDR` takes the whole `host:port`, so the deployed instance can bind `127.0.0.1` and be reachable *only* through its reverse proxy (§9); the app has no auth, so on a multi-homed host the wildcard default would expose the lists to the LAN. No config files.
 - **Logging:** `log/slog` JSON handler; one line per request (method, path, status, duration).
 - **Graceful shutdown:** trap SIGINT/SIGTERM, `server.Shutdown(ctx)`, close the pool.
 - **Migrations are not run by the server**; they're an explicit `make db-migrate` step (§9). The server fails fast on startup if the schema is missing (health check query).
@@ -403,6 +403,57 @@ The four DB lifecycle targets from the concept, plus dev conveniences:
 | `make frontend` | `cd frontend && npm run dev` |
 | `make dev` | db-create + db-migrate, then backend & frontend concurrently |
 | `make test` | `go test ./...` + `npm test` |
+
+### Deployment (single host over Tailscale)
+
+Hosting is a household concern, not a cloud one: the production instance is the same binary from §4
+running on a machine on the tailnet, so there is no bill, no public exposure, and no auth story to
+invent for an app that deliberately has none (§1 non-goals). Access is `tailscale serve`, which
+terminates TLS with a real Let's Encrypt cert for the node's MagicDNS name — HTTPS is not cosmetic
+here, it is what makes the origin a secure context so the service worker can register at all (§13).
+
+A user-level systemd unit (`~/.config/systemd/user/aisleflow.service`) owns the whole lifecycle:
+
+```ini
+[Unit]
+StartLimitIntervalSec=0        # retry the dockerd boot race forever, never give up
+
+[Service]
+Environment=LISTEN_ADDR=127.0.0.1:8090
+Environment=DATABASE_URL=postgres://aisleflow:aisleflow@localhost:5434/aisleflow?sslmode=disable
+ExecStartPre=/usr/bin/docker compose -f %h/…/docker-compose.yml up -d --wait db
+ExecStart=%h/…/backend/server
+ExecStartPost=/usr/bin/tailscale serve --bg --https=8443 http://127.0.0.1:8090
+ExecStopPost=-/usr/bin/tailscale serve --https=8443 off
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
+```
+
+Points that are load-bearing rather than incidental:
+
+- **A user unit cannot order against system units** — `After=docker.service` is meaningless in the
+  user manager, and `network-online.target` does not exist there. The `ExecStartPre … --wait db`
+  both starts the container (docker-compose.yml carries no `restart:` policy) and blocks on its
+  healthcheck; if it loses the race with `dockerd` at boot the unit simply fails and retries.
+  `StartLimitIntervalSec=0` is what makes that safe — the default burst limit would otherwise give
+  up after five quick failures and leave the app down.
+- **`sudo loginctl enable-linger <user>`** is required, or the user manager only starts at login and
+  "starts at boot" is a fiction.
+- **HTTPS must be enabled for the tailnet** (admin console → DNS → Enable HTTPS) before
+  `tailscale serve --https` can obtain a cert.
+- **The serve port is not necessarily 443.** Any process bound to the wildcard `0.0.0.0:443` also
+  owns the node's tailnet IPv4 address, and beats tailscaled to it — on a host already running a
+  web server, `tailscale serve --https=443` silently ends up bound only to the tailnet *IPv6*
+  address and the name appears to serve the wrong certificate. Picking a free port (8443) sidesteps
+  the collision, and a non-443 HTTPS origin is still a secure context, so nothing in §13 cares.
+- `tailscale serve --bg` persists in tailscaled's own state and would survive a reboot unaided;
+  re-applying it from `ExecStartPost` is idempotent and keeps the unit the single description of how
+  the app is exposed.
+
+Updating a deployment is `make build && systemctl --user restart aisleflow`.
 
 ---
 

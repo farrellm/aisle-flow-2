@@ -17,6 +17,7 @@ cd frontend && npx tsc -b     # typecheck (also covers src/test)
 - **Ports: frontend 5174, backend 8081, Postgres 5434.** 5173/8080 belong to other projects on this machine. Vite proxies `/api` → 8081.
 - Dev DB: Docker container `aisleflow-db`, usually left running. Ready check: `curl -sf http://localhost:8081/api/lists`.
 - **The dev DB holds a real grocery list.** When driving the app (see `.claude/skills/verify`), only create/gesture on throwaway `ZZZ …` items and delete them afterwards.
+- **Port 8090 is the deployed instance** — a systemd *user* unit (`~/.config/systemd/user/aisleflow.service`) runs `backend/server` against the same dev DB, bound to `127.0.0.1:8090` and published to the tailnet over `tailscale serve` on :8443 (§9); `tailscale serve status` prints the URL. It's on a separate port precisely so `make dev` can keep :8081 and both run at once — but it edits the *same* real list. Deploy a change with `make build && systemctl --user restart aisleflow`; logs are `journalctl --user -u aisleflow -f`.
 
 ## Architecture
 

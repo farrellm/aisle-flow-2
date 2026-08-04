@@ -28,7 +28,10 @@ func main() {
 func run() error {
 	databaseURL := envOr("DATABASE_URL",
 		"postgres://aisleflow:aisleflow@localhost:5434/aisleflow?sslmode=disable")
-	port := envOr("PORT", "8081")
+	// LISTEN_ADDR wins over PORT so a deployment can bind loopback only and be
+	// reachable solely through its reverse proxy (§9); PORT alone keeps the
+	// every-interface default that dev and the e2e suite rely on.
+	addr := envOr("LISTEN_ADDR", ":"+envOr("PORT", "8081"))
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -47,7 +50,7 @@ func run() error {
 	}
 
 	server := &http.Server{
-		Addr:    ":" + port,
+		Addr:    addr,
 		Handler: api.NewRouter(st, webui.Handler()),
 	}
 
