@@ -336,3 +336,153 @@ describe('multiple lists', () => {
     expect(window.location.pathname).toBe(`/l/${hardware.id}`)
   })
 })
+
+describe('notes', () => {
+  // Fake a row width so the hook's commit threshold (40% of it) is knowable.
+  function swipeTarget(name: string) {
+    const content = screen.getByTestId(`item-swipe-${name}`)
+    vi.spyOn(content, 'getBoundingClientRect').mockReturnValue({
+      width: 300, height: 48, top: 0, left: 0, right: 300, bottom: 48, x: 0, y: 0,
+      toJSON: () => ({}),
+    } as DOMRect)
+    return content
+  }
+
+  async function swipeRight(name: string, distance: number) {
+    const content = swipeTarget(name)
+    const { fireEvent } = await import('@testing-library/react')
+    fireEvent.pointerDown(content, { pointerId: 1, clientX: 40, clientY: 20, button: 0 })
+    fireEvent.pointerMove(content, { pointerId: 1, clientX: 40 + distance / 2, clientY: 22 })
+    fireEvent.pointerMove(content, { pointerId: 1, clientX: 40 + distance, clientY: 24 })
+    fireEvent.pointerUp(content, { pointerId: 1, clientX: 40 + distance, clientY: 24 })
+    return content
+  }
+
+  it('converts an item to a note on a committed left-to-right swipe', async () => {
+    resetDb([
+      makeItem({ name: 'Milk', position: 1024 }),
+      makeItem({ name: 'Bread', position: 2048 }),
+    ])
+    render(<App />)
+    await screen.findByTestId('item-row-Bread')
+
+    await swipeRight('Bread', 160) // past 40% of 300
+
+    await waitFor(() =>
+      expect(db.requests.some((r) => r.includes('"note":true'))).toBe(true),
+    )
+    // Pinned above the unchecked section, and no longer checkable.
+    await waitFor(() =>
+      expect(screen.queryByRole('checkbox', { name: 'Bread' })).not.toBeInTheDocument(),
+    )
+    expect(itemNames(shoppingLists()[0])).toEqual(['Bread'])
+    expect(itemNames(shoppingLists()[1])).toEqual(['Milk'])
+  })
+
+  it('reveals a Make note button on a short left-to-right swipe', async () => {
+    resetDb([makeItem({ name: 'Milk' })])
+    render(<App />)
+    await screen.findByTestId('item-row-Milk')
+
+    await swipeRight('Milk', 50) // past the 36px snap, short of the commit
+
+    expect(db.requests.some((r) => r.includes('"note"'))).toBe(false)
+    const makeNote = screen.getByRole('button', { name: 'Make Milk a note' })
+    expect(makeNote).toBeVisible()
+
+    const { fireEvent } = await import('@testing-library/react')
+    fireEvent.click(makeNote)
+    await waitFor(() =>
+      expect(db.requests.some((r) => r.includes('"note":true'))).toBe(true),
+    )
+  })
+
+  it('swipes a note back into an item, restoring its old slot', async () => {
+    resetDb([
+      makeItem({ name: 'Milk', position: 1024 }),
+      makeItem({ name: 'Bread', position: 2048, note: true }),
+      makeItem({ name: 'Coffee', position: 3072 }),
+    ])
+    render(<App />)
+    await screen.findByTestId('item-row-Bread')
+    expect(itemNames(shoppingLists()[0])).toEqual(['Bread'])
+
+    await swipeRight('Bread', 160)
+
+    await waitFor(() =>
+      expect(db.requests.some((r) => r.includes('"note":false'))).toBe(true),
+    )
+    // The note toggle never touched position, so Bread lands back between
+    // Milk and Coffee.
+    await waitFor(() =>
+      expect(itemNames(shoppingLists()[0])).toEqual(['Milk', 'Bread', 'Coffee']),
+    )
+  })
+
+  it('unchecks a checked item when it becomes a note', async () => {
+    resetDb([
+      makeItem({ name: 'Milk', position: 1024 }),
+      makeItem({ name: 'Apples', position: 2048, checked: true }),
+    ])
+    render(<App />)
+    await screen.findByTestId('item-row-Apples')
+    expect(screen.getByRole('checkbox', { name: 'Apples' })).toBeChecked()
+
+    await swipeRight('Apples', 160)
+
+    await waitFor(() =>
+      expect(screen.queryByRole('checkbox', { name: 'Apples' })).not.toBeInTheDocument(),
+    )
+    expect(itemNames(shoppingLists()[0])).toEqual(['Apples'])
+    expect(db.requests.some((r) => r.includes('"note":true'))).toBe(true)
+  })
+
+  it('leaves right-to-left delete alone', async () => {
+    resetDb([makeItem({ name: 'Milk' })])
+    render(<App />)
+    await screen.findByTestId('item-row-Milk')
+    const content = swipeTarget('Milk')
+
+    const { fireEvent } = await import('@testing-library/react')
+    fireEvent.pointerDown(content, { pointerId: 1, clientX: 250, clientY: 20, button: 0 })
+    fireEvent.pointerMove(content, { pointerId: 1, clientX: 90, clientY: 24 })
+    fireEvent.pointerUp(content, { pointerId: 1, clientX: 90, clientY: 24 })
+
+    await waitFor(() =>
+      expect(db.requests.some((r) => r.startsWith('DELETE'))).toBe(true),
+    )
+    expect(db.requests.some((r) => r.includes('"note"'))).toBe(false)
+  })
+
+  it('does not say "All done!" for a list holding only notes', async () => {
+    resetDb([makeItem({ name: 'Coupon expires Sunday', note: true })])
+    render(<App />)
+    await screen.findByText('Coupon expires Sunday')
+    expect(screen.queryByText(/All done/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Your list is empty/)).not.toBeInTheDocument()
+  })
+})
+
+describe('adding a name that is already a note', () => {
+  it('revives the note as a buyable item instead of just highlighting it', async () => {
+    resetDb([
+      makeItem({ name: 'Milk', position: 1024 }),
+      makeItem({ name: 'Paprika', position: 2048, note: true }),
+    ])
+    render(<App />)
+    await screen.findByText('Paprika')
+    expect(screen.queryByRole('checkbox', { name: 'Paprika' })).not.toBeInTheDocument()
+
+    const user = userEvent.setup()
+    await user.type(screen.getByRole('textbox', { name: 'Add an item' }), 'paprika{Enter}')
+
+    // A note is not a duplicate to flash — the add goes out and converts it.
+    await waitFor(() =>
+      expect(db.requests.some((r) => r.startsWith(`POST ${DEFAULT_LIST_ID}`))).toBe(true),
+    )
+    await waitFor(() =>
+      expect(screen.getByRole('checkbox', { name: 'Paprika' })).toBeInTheDocument(),
+    )
+    expect(itemNames(shoppingLists()[0])).toEqual(['Milk', 'Paprika'])
+  })
+})

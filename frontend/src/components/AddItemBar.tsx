@@ -9,8 +9,8 @@ import { findByName } from '../api/sort'
 
 interface AddItemBarProps {
   listId: string
-  // Fired when the typed name already exists unchecked: highlight that row
-  // instead of duplicating (§2).
+  // Fired when the typed name already exists as a plain unchecked item:
+  // highlight that row instead of duplicating (§2).
   onDuplicate: (id: string) => void
 }
 
@@ -24,8 +24,11 @@ export default function AddItemBar({ listId, onDuplicate }: AddItemBarProps) {
     if (!name) return
     setText('') // input clears and keeps focus so several items can be added in a row
 
+    // A checked item or a note is not a duplicate to flash: adding the name
+    // means the user wants to buy it, so let the add mutation run and revive
+    // the row — which is what the server does too (§6 create-or-revive).
     const existing = findByName(getCachedItems(client, listId), name)
-    if (existing && !existing.checked) {
+    if (existing && !existing.checked && !existing.note) {
       onDuplicate(existing.id)
       return
     }

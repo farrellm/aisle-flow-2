@@ -1,8 +1,10 @@
 import type { Item } from './types'
 
-// Client-side mirror of the server's display order (§7): unchecked by
-// position/createdAt/id, checked alphabetically (case-insensitive) — so
-// optimistic updates land rows in the right place without a round trip.
+// Client-side mirror of the server's display order (§7): notes first by
+// position, then unchecked by position/createdAt/id, then checked
+// alphabetically (case-insensitive) — so optimistic updates land rows in the
+// right place without a round trip. Mirrors store.ListItems' ORDER BY exactly;
+// change the two together.
 
 const byPosition = (a: Item, b: Item) =>
   a.position - b.position ||
@@ -16,7 +18,8 @@ const byName = (a: Item, b: Item) =>
 
 export function splitItems(items: Item[]) {
   return {
-    unchecked: items.filter((i) => !i.checked).sort(byPosition),
+    notes: items.filter((i) => i.note).sort(byPosition),
+    unchecked: items.filter((i) => !i.note && !i.checked).sort(byPosition),
     checked: items.filter((i) => i.checked).sort(byName),
   }
 }

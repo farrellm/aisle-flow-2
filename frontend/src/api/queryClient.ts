@@ -168,9 +168,10 @@ export function createAppQueryClient(): QueryClient {
     ...optimistic<AddVars>((items, { listId, id, name }) => {
       const existing = findByName(items, name)
       if (existing) {
-        // Revive: the server unchecks it; mirror that optimistically.
+        // Revive: the server turns a checked item or a note back into a plain
+        // unchecked item; mirror that optimistically.
         return items.map((i) =>
-          i.id === existing.id ? { ...i, checked: false } : i,
+          i.id === existing.id ? { ...i, checked: false, note: false } : i,
         )
       }
       const now = new Date().toISOString()
@@ -181,6 +182,7 @@ export function createAppQueryClient(): QueryClient {
           listId,
           name,
           checked: false,
+          note: false,
           position: maxPosition(items) + 1024,
           createdAt: now,
           updatedAt: now,

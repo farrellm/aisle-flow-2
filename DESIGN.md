@@ -1,6 +1,6 @@
 # AisleFlow — Design Document
 
-A set of shared shopping lists as a web app. Material Design UI. Each list is independent; within a list, unchecked items appear above checked items; unchecked items are manually ordered via drag and drop, checked items are sorted alphabetically, and an item's manual position survives being checked and unchecked.
+A set of shared shopping lists as a web app. Material Design UI. Each list is independent; within a list, notes pin to the top, then unchecked items, then checked items; unchecked items are manually ordered via drag and drop, checked items are sorted alphabetically, and an item's manual position survives being checked, unchecked, or turned into a note.
 
 **Stack:** Go backend · PostgreSQL in Docker · React frontend (Vite + TypeScript + MUI). Database lifecycle managed via `make`.
 
@@ -13,6 +13,7 @@ A set of shared shopping lists as a web app. Material Design UI. Each list is in
 - Several named shared shopping lists (e.g. Groceries, Hardware), editable by anyone with access to the app (household-scale). Each list behaves exactly like the single list described throughout this document; ordering, revive, and offline semantics are all scoped per list.
 - Fast add / check / uncheck / reorder / delete interactions with optimistic UI.
 - Unchecked items rendered above checked items.
+- Any item can be turned into a **note** — a reminder rather than something to buy ("skip the paprika, there's a full jar in the back"). Notes pin to the top of the list and are never checked.
 - Unchecked items ordered manually by drag and drop.
 - Checked items ordered alphabetically (case-insensitive).
 - **Order preservation:** checking an item and later unchecking it returns it to its previous position among the unchecked items.
@@ -24,7 +25,7 @@ A set of shared shopping lists as a web app. Material Design UI. Each list is in
 
 - Authentication or user accounts — the app is open (intended for home-network or personal deployment). Lists are not private from one another; anyone with the app can see and switch between all lists.
 - Real-time push (WebSockets/SSE).
-- Item metadata beyond a name (no quantities, categories, notes, or images).
+- Item metadata beyond a name and the note flag (no quantities, categories, or images).
 
 These are all listed as [future extensions](#12-future-extensions); the design deliberately leaves room for them without requiring them now.
 
@@ -42,6 +43,9 @@ A single screen, mobile-first, max content width ~600 px centered on larger scre
 ├─────────────────────────────────────┤
 │  [ Add an item…              ] (+)  │  ← Add bar (TextField + submit)
 ├─────────────────────────────────────┤
+│  ┃  Skip the paprika — full jar     │  ┐ Notes section
+│  ┃  in the back                     │  ┘ (pinned, tinted, no checkbox)
+│  ─────────────────────────────────  │  ← Divider
 │  ⠿ ☐ Milk                           │  ┐
 │  ⠿ ☐ Bread                          │  │ Unchecked section
 │  ⠿ ☐ Coffee beans                   │  │ (drag handles, manual order)
@@ -64,8 +68,10 @@ A single screen, mobile-first, max content width ~600 px centered on larger scre
 | Add bar | `TextField` + `IconButton` (`AddIcon`), or `Fab` on mobile |
 | Item rows | `List` / `ListItem` + `Checkbox` + `ListItemText` |
 | Drag handle | `DragIndicatorIcon` (unchecked rows only) |
+| Note row | no `Checkbox` and no handle; a 3 px `note.rule` bar in the margin over a `note.ground` tint |
 | Section divider | `Divider` |
-| Delete | `IconButton` (`DeleteOutlineIcon`) revealed on hover / always visible on touch |
+| Delete | revealed by a right-to-left swipe: an `error.main` strip with a `ButtonBase` + `DeleteIcon` |
+| Make note / Make item | revealed by a left-to-right swipe: a `note.main` strip with `StickyNote2Icon` / `CheckBoxOutlineBlankIcon` |
 | Errors | `Snackbar` + `Alert` |
 | Theme | `ThemeProvider` with a standard Material palette; respect `prefers-color-scheme` for light/dark |
 
@@ -73,11 +79,14 @@ A single screen, mobile-first, max content width ~600 px centered on larger scre
 
 - **Add:** type a name, press Enter or tap (+). The item appends to the *bottom of the unchecked section*. Input clears and keeps focus so several items can be added in a row. Leading/trailing whitespace is trimmed; empty input is ignored.
   - If the name already exists (case-insensitive) and is **checked**, the item is unchecked instead of duplicated — it reappears at its preserved position.
-  - If it already exists and is **unchecked**, nothing is created; the existing row is briefly highlighted so the user sees it's already on the list.
+  - If the name already exists as a **note**, adding it means the user wants to buy it after all: the note converts back into a plain unchecked item (`revived: true`), at its preserved position.
+  - If it already exists as a plain **unchecked item**, nothing is created; the existing row is briefly highlighted so the user sees it's already on the list.
 - **Check:** tap the checkbox. The row animates out of the unchecked section and into its alphabetical slot in the checked section (strikethrough, dimmed).
 - **Uncheck:** tap the checkbox of a checked item. It returns to the unchecked section **at its preserved position** (see §3).
 - **Reorder:** drag an unchecked row by its handle. Only the unchecked section is sortable; rows cannot be dragged into the checked section. During a drag, polling updates are paused (see §7).
-- **Delete:** per-row delete icon removes the item permanently. No confirm dialog for a single item (low stakes; the item can be retyped).
+- **Delete:** swipe a row **right to left**. Past 40 % of the row width the row slides off and the delete fires; a shorter swipe snaps the row open to reveal a tappable Delete button; less springs back. No confirm dialog for a single item (low stakes; the item can be retyped). Keyboard fallback: `Delete`/`Backspace` on a focused row.
+- **Make a note:** swipe a row **left to right**, the mirror gesture with the same thresholds. Past the commit threshold the row springs back — nothing is being removed — and reappears pinned at the top of the list as a note: no checkbox, a rule in the margin, a tinted ground. It is flashed at its new position with the same 2 s pulse that marks a duplicate add, so the eye can follow it. The same gesture on a note turns it back into an item, which lands at its preserved position (§3). Converting a **checked** item unchecks it — a note is never checked. Keyboard fallback: `n` on a focused row.
+  - Notes are **not** drag-reorderable; pinned to the top, they render in preserved `position` order, so several items converted one after another keep their relative order.
 
 ### Lists
 
@@ -100,11 +109,14 @@ This is the core of the app, so it gets its own section. **Everything here is sc
 
 ### The invariant
 
-Every item — checked or not — carries a persistent numeric `position`. **Checking or unchecking an item never modifies its `position`.** That single rule yields the required behavior:
+Every item — checked, unchecked, or a note — carries a persistent numeric `position`. **Checking, unchecking, and converting to or from a note never modify an item's `position`.** That single rule yields the required behavior:
 
-- Unchecked items are displayed sorted by `position` ascending.
-- Checked items are displayed sorted by `lower(name)` ascending; their `position` is ignored for display but retained.
-- When an item is unchecked, it naturally reappears among the unchecked items wherever its retained `position` places it — i.e., where it was before it was checked (relative to the items that are still there).
+- Notes are displayed first, sorted by `position` ascending.
+- Unchecked items are displayed next, sorted by `position` ascending.
+- Checked items are displayed last, sorted by `lower(name)` ascending; their `position` is ignored for display but retained.
+- When an item is unchecked, it naturally reappears among the unchecked items wherever its retained `position` places it — i.e., where it was before it was checked (relative to the items that are still there). A note converted back into an item does the same, for the same reason.
+
+A note is never checked; the store forces `checked = false` whenever `note` is true, and a CHECK constraint (migration `000003`) makes the invariant unfalsifiable from any path. That is what keeps a note out of the alphabetical checked section.
 
 ### Position values
 
@@ -119,7 +131,7 @@ Every item — checked or not — carries a persistent numeric `position`. **Che
 Repeated midpoint insertion in the same gap halves the gap each time; after ~50 splits a float64 midpoint stops producing distinct values. This is practically unreachable for a shopping list, but the design handles it anyway:
 
 - When the backend computes a reorder and finds `abs(new - neighbor) < 1e-6`, it renormalizes inside the same transaction: rewrite **all of that list's** items' positions to `1024, 2048, 3072, …` following the current canonical order (unchecked by position first, then checked by position), then re-applies the move. The rewrite is scoped by `list_id`, so other lists are untouched.
-- Renormalization preserves relative order of every item, checked ones included, so preservation semantics are unaffected.
+- Renormalization preserves relative order of every item, checked ones included, so preservation semantics are unaffected. It needs no note-awareness: it renumbers monotonically in `position`, which preserves relative order *within* the notes group and *within* the unchecked group alike, and those groups are each ordered by `position` alone.
 
 To keep this logic in one place, the *backend* computes positions: the client's reorder request names the target neighbors, not a raw float (see §6, `PATCH` with `before`/`after`). The client still computes a midpoint locally for its optimistic render, but the server's value is authoritative and comes back in the response.
 
@@ -170,20 +182,24 @@ CREATE TABLE lists (
     CONSTRAINT lists_name_not_blank CHECK (btrim(name) <> '')
 );
 
--- items after migration 000002:
+-- items after migrations 000002 and 000003:
 --   + list_id uuid NOT NULL REFERENCES lists(id) ON DELETE CASCADE
+--   + note boolean NOT NULL DEFAULT false
 --   name uniqueness is now per list, not global
 CREATE TABLE items (
     id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     list_id    uuid NOT NULL REFERENCES lists (id) ON DELETE CASCADE,
     name       citext NOT NULL,
     checked    boolean NOT NULL DEFAULT false,
+    note       boolean NOT NULL DEFAULT false,
     position   double precision NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
 
     CONSTRAINT items_list_name_unique UNIQUE (list_id, name),
-    CONSTRAINT items_name_not_blank CHECK (btrim(name) <> '')
+    CONSTRAINT items_name_not_blank CHECK (btrim(name) <> ''),
+    -- A note is never checked (§3): the display order depends on it.
+    CONSTRAINT items_note_not_checked CHECK (NOT (note AND checked))
 );
 
 -- Serves the two display orderings, per list.
@@ -196,6 +212,7 @@ Notes:
 - `citext` gives case-insensitive uniqueness and comparison ("Milk" ≡ "milk") without `lower()` gymnastics. The original casing the user typed is preserved for display.
 - Name uniqueness is **per list** (`UNIQUE (list_id, name)`) — the same name may appear in different lists, and it is per-list uniqueness that powers the create-or-revive behavior in §2/§6.
 - `ON DELETE CASCADE` means deleting a list removes its items in one statement; the server refuses to delete the last remaining list (§6).
+- Migration `000003_add_item_notes` adds the `note` column and its CHECK constraint. It defaults to `false`, so it is backward compatible: a server binary that predates it keeps working against the migrated database, which is what lets the migration be applied before the deployed binary is replaced (§9).
 - Migration `000002_create_lists` seeds a list named **"Groceries"** and backfills every pre-existing item into it, so the upgrade is data-preserving. Its down migration is lossy: it collapses cross-list name duplicates (keeping the oldest) before restoring the global unique constraint.
 - `updated_at` is maintained by the store layer on every mutation (no trigger needed at this scale).
 - No soft deletes; `DELETE` is a real delete.
@@ -221,6 +238,7 @@ interface Item {
   listId: string;      // uuid
   name: string;
   checked: boolean;
+  note: boolean;       // a reminder, not something to buy; never checked
   position: number;
   createdAt: string;   // RFC 3339
   updatedAt: string;   // RFC 3339
@@ -237,9 +255,9 @@ Item endpoints are nested under their list. An item id addressed through the wro
 | `POST /api/lists` | `{ "name": string, "id"?: uuid }` | `201` `{ "list": List }` | Create a list. Name trimmed; blank → `422`; duplicate → `409`. Optional client-generated `id` (§13). |
 | `PATCH /api/lists/{listId}` | `{ "name": string }` | `200` `{ "list": List }` | Rename. Blank → `422`; duplicate → `409`. |
 | `DELETE /api/lists/{listId}` | — | `204` | Delete a list and (cascade) its items. Deleting the only remaining list → `409 last_list`. |
-| `GET /api/lists/{listId}/items` | — | `200` `{ "items": Item[] }` | The list's items in display order: unchecked by `position, created_at, id`, then checked by `name`. Unknown list → `404`. |
-| `POST /api/lists/{listId}/items` | `{ "name": string, "id"?: uuid }` | `201` `{ "item": Item, "revived": false }` — created<br>`200` `{ "item": Item, "revived": true }` — existing checked item was unchecked<br>`200` `{ "item": Item, "revived": false }` — already unchecked, no-op | Create-or-revive within the list. Name is trimmed server-side; blank → `422`. The optional `id` lets offline clients generate the uuid themselves so queued follow-up mutations can reference the item before the response arrives (§13); an `id` colliding with a different name → `409`; unknown list → `404`. |
-| `PATCH /api/lists/{listId}/items/{id}` | any subset of:<br>`{ "name": string }`<br>`{ "checked": boolean }`<br>`{ "before": id \| null, "after": id \| null }` | `200` `{ "item": Item }` | Rename, check/uncheck, and/or reorder. `before`/`after` name the unchecked neighbors at the drop location (`null` = edge of the unchecked section); the **server** computes the new `position` (§3). |
+| `GET /api/lists/{listId}/items` | — | `200` `{ "items": Item[] }` | The list's items in display order: notes by `position`, then unchecked by `position, created_at, id`, then checked by `name`. Unknown list → `404`. |
+| `POST /api/lists/{listId}/items` | `{ "name": string, "id"?: uuid }` | `201` `{ "item": Item, "revived": false }` — created<br>`200` `{ "item": Item, "revived": true }` — an existing checked item or note was turned back into a plain unchecked item<br>`200` `{ "item": Item, "revived": false }` — already a plain unchecked item, no-op | Create-or-revive within the list. Name is trimmed server-side; blank → `422`. The optional `id` lets offline clients generate the uuid themselves so queued follow-up mutations can reference the item before the response arrives (§13); an `id` colliding with a different name → `409`; unknown list → `404`. |
+| `PATCH /api/lists/{listId}/items/{id}` | any subset of:<br>`{ "name": string }`<br>`{ "checked": boolean }`<br>`{ "note": boolean }`<br>`{ "before": id \| null, "after": id \| null }` | `200` `{ "item": Item }` | Rename, check/uncheck, convert to/from a note, and/or reorder. `note: true` forces `checked` to `false` in the same response (§3). `before`/`after` name the unchecked neighbors at the drop location (`null` = edge of the unchecked section); the **server** computes the new `position` (§3). |
 | `DELETE /api/lists/{listId}/items/{id}` | — | `204` | Delete one item. |
 | `GET /api/healthz` | — | `200` `{ "status": "ok" }` | Liveness + DB ping. |
 
@@ -288,12 +306,17 @@ Race notes: `POST` uses `INSERT … ON CONFLICT (list_id, name)` + follow-up log
      ├─ <TopBar>              list-name dropdown (switch/new), ⋮ menu (rename/delete)
      │   └─ <ListNameDialog>  shared by "New list" and "Rename list"
      ├─ <AddItemBar>          controlled TextField; useAddItem(listId) mutation
-     └─ <ShoppingList>        useItems(listId) query; splits into unchecked/checked
+     └─ <ShoppingList>        useItems(listId) query; splits into notes/unchecked/checked
+         ├─ <NoteList>        pinned, not sortable — no DndContext
+         │   └─ <ItemRow>       margin rule, name, no checkbox
+         ├─ <Divider>
          ├─ <UncheckedList>   DndContext + SortableContext
-         │   └─ <ItemRow sortable>  drag handle, checkbox, name, delete
+         │   └─ <ItemRow sortable>  drag handle, checkbox, name
          ├─ <Divider>
          └─ <CheckedList>
-             └─ <ItemRow>       checkbox, struck-through name, delete
+             └─ <ItemRow>       checkbox, struck-through name
+
+Every `ItemRow` carries both swipe actions (`useRowSwipe`): delete leftward, make-note/make-item rightward.
 ```
 
 ### Data layer (`src/api/`)
@@ -301,7 +324,8 @@ Race notes: `POST` uses `INSERT … ON CONFLICT (list_id, name)` + follow-up log
 - Query keys: `['lists']` for the list collection, and `['items', listId]` per list (`itemsKey(listId)`). `useLists()` and `useItems(listId)` both `useQuery({ refetchInterval: 4000, refetchOnWindowFocus: true })`, with polling **paused while a drag is in progress or a mutation is in flight or queued** (`refetchInterval` callback form) so a refetch can't yank rows mid-drag.
 - Item mutations (`useAddItem`, `useUpdateItem`, `useDeleteItem`) and list mutations (`useAddList`, `useRenameList`, `useDeleteList`) all follow the standard TanStack optimistic pattern: `onMutate` cancels in-flight queries and patches the cache; `onError` restores the snapshot and shows a Snackbar; `onSettled` invalidates to reconcile with the server (picking up the server-computed `position`). The mutation functions and this optimistic plumbing live in **keyed mutation defaults** on the QueryClient (`src/api/queryClient.ts`), not inline in the hooks — a requirement of offline persistence (§13); the hooks bind by `mutationKey` only.
 - **`listId` travels inside every item mutation's vars** (`{ listId, id, … }`), not captured from a closure: vars are what the persister serializes, so a mutation resumed after a reload re-derives its `['items', listId]` key and request URL from them alone. The `optimistic()` helper reads `vars.listId` to target the right cache entry.
-- Sorting is done client-side from a list's flat `items` array (`unchecked: sort by position` / `checked: sort by localeCompare(name)`), matching the server's order — so an optimistic check/uncheck lands the row in the right place without waiting for the network.
+- Sorting is done client-side from a list's flat `items` array (`splitItems`: `notes` and `unchecked` by position, `checked` by `localeCompare(name)`), matching the server's order — so an optimistic check/uncheck or note conversion lands the row in the right place without waiting for the network. `splitItems` and `store.ListItems`' `ORDER BY` are one rule expressed twice: change them together.
+- A note conversion needs no mutation key of its own — it is a `PATCH {note, checked}` through the existing `['updateItem']` default, whose `optimistic` vars are merged into the cached item, so it inherits §13's dehydrate/resume contract unchanged.
 
 ### Drag and drop specifics
 
@@ -313,7 +337,9 @@ Race notes: `POST` uses `INSERT … ON CONFLICT (list_id, name)` + follow-up log
 
 - Check/uncheck animates via a shared-layout transition (CSS transform transitions on reflow; `AnimatePresence`-style libraries not required).
 - Checked rows: `text-decoration: line-through`, `color: text.secondary`.
-- Duplicate-add highlight: temporarily set a `flash` class on the existing row (2 s background pulse) and scroll it into view.
+- Duplicate-add highlight: temporarily set a `flash` class on the existing row (2 s background pulse) and scroll it into view. A note conversion reuses the same signal at the row's new position — same meaning ("this row, here"), nothing new to learn, and no second highlight colour spent.
+- **Notes read as marginalia**, not as another line to tick: a 3 px rule at the row's left edge inside the sliding content, a ground one step off `background.paper`, no checkbox and no drag handle, and the text still starting at the same x as the item names above it (a 66 px inset standing in for the handle + checkbox columns) so the column of names stays one column. An item name is a noun and an note is a sentence, so notes get looser leading and room to wrap. `theme.ts` carries the three tokens (`note.main` `#3F5B78` for the swipe strip, `note.rule`, `note.ground`), light and dark; the existing palette roles were all spoken for — `error.main` is the delete swipe and amber is the flash.
+- **Swipe rows both ways** (`useRowSwipe`): one hook, not two, because the directions share pointer capture, the 12 px activation slop and the post-swipe click suppression over the same element. Direction is locked when the gesture activates so it cannot flip mid-swipe, and only one side's strip can be open at a time. The leftward commit holds the row translated off-screen (it is going away); the rightward commit resets to zero (the row is converted, not removed).
 
 ---
 
@@ -335,6 +361,7 @@ backend/
 │  ├─ store.go               Store struct over *pgxpool.Pool; Item, List types
 │  ├─ lists.go               ListLists, CreateList, RenameList, DeleteList
 │  ├─ items.go               ListItems, CreateOrRevive, Update, Delete (all take listID)
+│  │                         Update forces checked=false whenever note is true (§3)
 │  └─ position.go            midpoint computation + per-list renormalization (§3)
 └─ internal/webui/           embed.FS of the built frontend (production)
 ```
@@ -386,7 +413,7 @@ docker run --rm -v $(PWD)/db/migrations:/migrations --network host \
   migrate/migrate -path=/migrations -database "$(DATABASE_URL)" up
 ```
 
-Migrations: `000001_create_items` (initial schema) and `000002_create_lists` (adds the `lists` table and `items.list_id`, seeds "Groceries", makes name uniqueness per-list — schema from §5).
+Migrations: `000001_create_items` (initial schema), `000002_create_lists` (adds the `lists` table and `items.list_id`, seeds "Groceries", makes name uniqueness per-list) and `000003_add_item_notes` (adds `items.note` and its CHECK constraint) — schema from §5.
 
 ### Makefile
 
@@ -453,7 +480,7 @@ Points that are load-bearing rather than incidental:
   re-applying it from `ExecStartPost` is idempotent and keeps the unit the single description of how
   the app is exposed.
 
-Updating a deployment is `make build && systemctl --user restart aisleflow`.
+Updating a deployment is `make build && systemctl --user restart aisleflow`. When the change carries a migration, apply it **first** (`make db-migrate`): the deployed binary and the dev database are the same database, and additive migrations are backward compatible, so the running old binary keeps serving until it is replaced.
 
 ---
 
@@ -489,15 +516,17 @@ aisle-flow/
   - midpoint reorder between arbitrary neighbors;
   - forced renormalization (seed positions `1.0` and `1.0 + 1e-7`, insert between, assert all positions rewritten and order preserved) — and that a *second* list with the same tight positions is left untouched;
   - concurrent `POST` of the same name converges to one row.
+- **Note tests** (`store/notes_test.go`): converting to a note and back preserves `position` and the row's slot; converting a checked item unchecks it; `ListItems` returns notes → unchecked → checked; `CreateOrRevive` on a note's name clears `note` and reports `revived`; a forced renormalization with notes present preserves both groups' relative order.
 - **List tests:** list CRUD; duplicate name → conflict; the same name coexisting in two lists; revive scoped to one list; deleting a list cascades its items; the last-list guard (including two concurrent deletes leaving exactly one list).
-- **Handler tests** with `httptest` against a store backed by the test DB: status codes, error envelope shape, list lifecycle, `409 last_list`, unknown-list and wrong-list `404`s. The test-DB helper applies **all** migrations in `db/migrations/` in order.
+- **Handler tests** with `httptest` against a store backed by the test DB: status codes, error envelope shape, list lifecycle, `409 last_list`, unknown-list and wrong-list `404`s, and `PATCH {note}` returning `note: true, checked: false` with `position` untouched. The test-DB helper applies **all** migrations in `db/migrations/` in order.
 
 ### Frontend
 
 - **Vitest + React Testing Library**, mocking the API with MSW:
   - list splits/sorts correctly (unchecked by position, checked alphabetically);
   - checking an item moves it to the checked section optimistically;
-  - add-duplicate highlights instead of duplicating;
+  - add-duplicate highlights instead of duplicating — but adding a name that is currently a **note** revives it into a buyable item rather than flashing it;
+  - notes: `splitItems` splits three ways; a committed left-to-right swipe converts and sends `PATCH {"note":true}`; a short one reveals the Make note button; swiping a note back restores its slot; converting a checked item unchecks it; the right-to-left delete swipe is unaffected; a list of only notes does not claim "All done!";
   - failed mutation rolls back and shows the error Snackbar;
   - offline queue (§13): mutations made while `onlineManager` is offline send nothing and replay on reconnect against the correct list, and a *create → check* chain replays in order against the client-generated uuid;
   - lists: switching from the AppBar dropdown changes the URL and rendered items; creating a list navigates to it; renaming reflects in the title; deleting navigates to a surviving list and is disabled when only one remains; a bad `/l/{id}` redirects with a snackbar; `/` redirects to a list.
@@ -528,7 +557,8 @@ Explicitly out of scope now; the design leaves seams for them:
 
 - **Auth** — no-auth is isolated to "there's no middleware"; a session or shared-token middleware slots into `internal/api/middleware.go` without touching handlers.
 - **Push updates** — replace polling with SSE (`GET /api/events`); TanStack Query invalidation on event keeps the rest of the frontend unchanged.
-- **Item metadata** — quantity/note columns are additive migrations; `ItemRow` grows secondary text.
+- **Item metadata** — quantity columns are additive migrations, the way `note` was; `ItemRow` grows secondary text.
+- **Editable note text** — `PATCH {name}` already exists server-side and a note is the one row whose wording you would want to revise; there is no rename UI yet.
 
 ---
 
@@ -569,4 +599,4 @@ Household-scale trade-offs, chosen deliberately:
 - A queued `PATCH` replayed later overwrites whatever the row holds then — LWW means *last to arrive*. No version guard.
 - A replayed add of a name that was checked in the meantime revives (unchecks) it — consistent with the §6 create-or-revive semantics.
 - Idempotence: check/uncheck writes absolute values and deletes tolerate 404, so duplicate replays converge; a replayed create converges on the existing row via the name conflict.
-- **Upgrade cost:** the persister `buster` bumps on any cache-shape change (`v1` → `v2` for multiple lists, `v2` → `v3` when "clear checked" was removed and its queued mutations lost their registered default), so on the first load of a new version the pre-upgrade cache **and any mutations still queued in the old format are discarded** — a one-time loss, acceptable at household scale.
+- **Upgrade cost:** the persister `buster` bumps on any cache-shape change (`v1` → `v2` for multiple lists, `v2` → `v3` when "clear checked" was removed and its queued mutations lost their registered default, `v3` → `v4` when `Item` gained `note`), so on the first load of a new version the pre-upgrade cache **and any mutations still queued in the old format are discarded** — a one-time loss, acceptable at household scale.
