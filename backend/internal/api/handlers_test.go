@@ -335,3 +335,51 @@ func TestUnknownAPIPath(t *testing.T) {
 		assertErrorEnvelope(t, body, "not_found")
 	}
 }
+
+// PATCH {note} rides the existing item update endpoint (§6). A note is never
+// checked, so converting a checked item unchecks it in the same response.
+func TestUpdateItemNote(t *testing.T) {
+	srv, itemsURL := newServer(t)
+
+	res, body := do(t, "POST", itemsURL, map[string]any{"name": "Paprika"})
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("create status = %d, want 201", res.StatusCode)
+	}
+	item := body["item"].(map[string]any)
+	if item["note"] != false {
+		t.Fatalf("new item note = %v, want false", item["note"])
+	}
+	id := item["id"].(string)
+	position := item["position"].(float64)
+
+	res, _ = do(t, "PATCH", itemsURL+"/"+id, map[string]any{"checked": true})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("check status = %d, want 200", res.StatusCode)
+	}
+
+	res, body = do(t, "PATCH", itemsURL+"/"+id, map[string]any{"note": true})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("note status = %d, want 200", res.StatusCode)
+	}
+	item = body["item"].(map[string]any)
+	if item["note"] != true || item["checked"] != false {
+		t.Fatalf("note=%v checked=%v, want true/false", item["note"], item["checked"])
+	}
+	if item["position"] != position {
+		t.Fatalf("position = %v, want %v (a note toggle never moves a row)",
+			item["position"], position)
+	}
+
+	// Addressed through the wrong list, a note is as invisible as any item.
+	res, body = do(t, "POST", srv.URL+"/api/lists", map[string]any{"name": "Hardware"})
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("create list status = %d, want 201", res.StatusCode)
+	}
+	otherID := body["list"].(map[string]any)["id"].(string)
+	res, body = do(t, "PATCH",
+		srv.URL+"/api/lists/"+otherID+"/items/"+id, map[string]any{"note": false})
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("wrong-list status = %d, want 404", res.StatusCode)
+	}
+	assertErrorEnvelope(t, body, "not_found")
+}

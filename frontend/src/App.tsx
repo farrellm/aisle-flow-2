@@ -60,7 +60,7 @@ export default function App() {
           // would resume with no registered default, rejecting
           // resumePausedMutations and skipping the post-restore invalidates.
           // Discarding the old cache once at upgrade avoids that (§13).
-          buster: 'v3',
+          buster: 'v4',
         }}
         // .finally, not .then: one rejected mutation in the resumed queue must
         // not swallow the reconciling invalidates (and leave an unhandled

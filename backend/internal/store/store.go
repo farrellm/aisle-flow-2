@@ -16,10 +16,13 @@ var (
 )
 
 type Item struct {
-	ID        string    `json:"id"`
-	ListID    string    `json:"listId"`
-	Name      string    `json:"name"`
-	Checked   bool      `json:"checked"`
+	ID      string `json:"id"`
+	ListID  string `json:"listId"`
+	Name    string `json:"name"`
+	Checked bool   `json:"checked"`
+	// Note marks a reminder rather than something to buy; notes pin to the
+	// top of the list and are never checked (§2, §3).
+	Note      bool      `json:"note"`
 	Position  float64   `json:"position"`
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
@@ -40,7 +43,7 @@ func New(pool *pgxpool.Pool) *Store {
 	return &Store{pool: pool}
 }
 
-const itemColumns = `id::text, list_id::text, name::text, checked, position, created_at, updated_at`
+const itemColumns = `id::text, list_id::text, name::text, checked, note, position, created_at, updated_at`
 
 const listColumns = `id::text, name::text, created_at, updated_at`
 
@@ -50,7 +53,7 @@ type rowScanner interface {
 
 func scanItem(row rowScanner) (Item, error) {
 	var it Item
-	err := row.Scan(&it.ID, &it.ListID, &it.Name, &it.Checked, &it.Position, &it.CreatedAt, &it.UpdatedAt)
+	err := row.Scan(&it.ID, &it.ListID, &it.Name, &it.Checked, &it.Note, &it.Position, &it.CreatedAt, &it.UpdatedAt)
 	return it, err
 }
 

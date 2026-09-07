@@ -50,7 +50,7 @@ export default function ListScreen() {
       <TopBar listId={listId} />
       <Container maxWidth="sm" disableGutters sx={{ maxWidth: 600, pb: 8 }}>
         <AddItemBar listId={listId} onDuplicate={flash} />
-        <ShoppingList listId={listId} flashId={flashId} />
+        <ShoppingList listId={listId} flashId={flashId} onFlash={flash} />
       </Container>
     </>
   )

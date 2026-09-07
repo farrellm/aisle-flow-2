@@ -9,14 +9,16 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// ListItems returns a list's items in display order: unchecked by position,
-// created_at, id, then checked by name (citext, case-insensitive).
+// ListItems returns a list's items in display order (§3): notes first by
+// position, then unchecked by position, then checked by name (citext,
+// case-insensitive), all tie-broken by created_at, id. The client mirrors this
+// exact order in sort.ts splitItems — change the two together.
 // ErrListNotFound distinguishes a missing list from an empty one.
 func (s *Store) ListItems(ctx context.Context, listID string) ([]Item, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT `+itemColumns+` FROM items
 		WHERE list_id = $1::uuid
-		ORDER BY checked,
+		ORDER BY CASE WHEN note THEN 0 WHEN NOT checked THEN 1 ELSE 2 END,
 		         CASE WHEN NOT checked THEN position END,
 		         CASE WHEN checked THEN name END,
 		         created_at, id`, listID)
@@ -49,8 +51,9 @@ func (s *Store) ListItems(ctx context.Context, listID string) ([]Item, error) {
 }
 
 // CreateOrRevive implements the POST semantics (§6): insert a new item at the
-// bottom of the list; if the name already exists in this list and is checked,
-// uncheck it (revived=true); if it exists unchecked, no-op. All in one
+// bottom of the list; if the name already exists in this list and is checked
+// or is a note, turn it back into a plain unchecked item (revived=true); if it
+// already is a plain unchecked item, no-op. All in one
 // transaction so concurrent adds of the same name converge to one row. A nil
 // id lets the database generate one; offline clients pass their own uuid.
 func (s *Store) CreateOrRevive(ctx context.Context, listID, name string, id *string) (item Item, created, revived bool, err error) {
@@ -84,9 +87,13 @@ func (s *Store) CreateOrRevive(ctx context.Context, listID, name string, id *str
 		if err != nil {
 			return err
 		}
-		if item.Checked {
+		// Revive covers both ways an existing row can be "not on the buy
+		// list": checked, or turned into a note. Adding the name means the
+		// user wants to buy it, so either state converges back to a plain
+		// unchecked item.
+		if item.Checked || item.Note {
 			row = tx.QueryRow(ctx, `
-				UPDATE items SET checked = false, updated_at = now()
+				UPDATE items SET checked = false, note = false, updated_at = now()
 				WHERE id = $1::uuid RETURNING `+itemColumns, item.ID)
 			item, err = scanItem(row)
 			revived = true
@@ -107,11 +114,15 @@ func (s *Store) CreateOrRevive(ctx context.Context, listID, name string, id *str
 type UpdateParams struct {
 	Name    *string
 	Checked *bool
+	Note    *bool
 	Reorder *ReorderTarget
 }
 
-// Update applies rename, check/uncheck, and/or reorder atomically. Checking
-// or unchecking never modifies position (§3); only a reorder does. An id that
+// Update applies rename, check/uncheck, note/unnote, and/or reorder
+// atomically. Checking, unchecking and converting to or from a note never
+// modify position (§3); only a reorder does — which is what lets a note
+// converted back to an item return to the slot it held before. A note is
+// never checked; turning a checked item into a note unchecks it. An id that
 // exists under a different list is ErrNotFound (§6: list membership check).
 func (s *Store) Update(ctx context.Context, listID, id string, p UpdateParams) (Item, error) {
 	var item Item
@@ -135,6 +146,15 @@ func (s *Store) Update(ctx context.Context, listID, id string, p UpdateParams) (
 		if p.Checked != nil {
 			checked = *p.Checked
 		}
+		note := current.Note
+		if p.Note != nil {
+			note = *p.Note
+		}
+		if note {
+			// The invariant behind the display order: a note is never checked
+			// (also a CHECK constraint, migration 000003).
+			checked = false
+		}
 		position := current.Position
 		if p.Reorder != nil {
 			position, err = computePosition(ctx, tx, listID, id, *p.Reorder)
@@ -144,8 +164,8 @@ func (s *Store) Update(ctx context.Context, listID, id string, p UpdateParams) (
 		}
 
 		row = tx.QueryRow(ctx, `
-			UPDATE items SET name = $2, checked = $3, position = $4, updated_at = now()
-			WHERE id = $1::uuid RETURNING `+itemColumns, id, name, checked, position)
+			UPDATE items SET name = $2, checked = $3, note = $4, position = $5, updated_at = now()
+			WHERE id = $1::uuid RETURNING `+itemColumns, id, name, checked, note, position)
 		item, err = scanItem(row)
 		return err
 	})

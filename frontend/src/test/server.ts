@@ -22,6 +22,7 @@ export function makeItem(overrides: Partial<Item> & { name: string }): Item {
     id: `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`,
     listId: DEFAULT_LIST_ID,
     checked: false,
+    note: false,
     position: n * 1024,
     createdAt: new Date(2026, 0, n).toISOString(),
     updatedAt: new Date(2026, 0, n).toISOString(),
@@ -107,6 +108,19 @@ export const server = setupServer(
     const { id, name } = (await request.json()) as { id?: string; name: string }
     db.requests.push(`POST ${params.listId} ${name}`)
     if (!listOr404(params.listId)) return notFound('list')
+    // Create-or-revive (§6): an existing checked item or note converges back
+    // to a plain unchecked item rather than duplicating.
+    const existing = db.items.find(
+      (i) =>
+        i.listId === params.listId &&
+        i.name.localeCompare(name, undefined, { sensitivity: 'base' }) === 0,
+    )
+    if (existing) {
+      const revived = existing.checked || existing.note
+      existing.checked = false
+      existing.note = false
+      return HttpResponse.json({ item: existing, revived })
+    }
     const item = makeItem({
       name,
       listId: params.listId as string,
@@ -123,6 +137,11 @@ export const server = setupServer(
     )
     if (!item) return notFound('item')
     if (typeof patch.checked === 'boolean') item.checked = patch.checked
+    if (typeof patch.note === 'boolean') {
+      item.note = patch.note
+      // A note is never checked — mirrors store.Update's invariant.
+      if (patch.note) item.checked = false
+    }
     if (typeof patch.name === 'string') item.name = patch.name
     return HttpResponse.json({ item })
   }),

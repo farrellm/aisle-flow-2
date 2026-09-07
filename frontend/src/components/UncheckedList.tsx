@@ -29,10 +29,17 @@ interface UncheckedListProps {
   items: Item[] // already sorted by position
   flashId: string | null
   onToggle: (item: Item) => void
+  onToggleNote: (item: Item) => void
   onDelete: (item: Item) => void
 }
 
-export default function UncheckedList({ items, flashId, onToggle, onDelete }: UncheckedListProps) {
+export default function UncheckedList({
+  items,
+  flashId,
+  onToggle,
+  onToggleNote,
+  onDelete,
+}: UncheckedListProps) {
   const updateItem = useUpdateItem()
   const client = useQueryClient()
   const sensors = useSensors(
@@ -78,6 +85,7 @@ export default function UncheckedList({ items, flashId, onToggle, onDelete }: Un
               sortable
               flash={item.id === flashId}
               onToggle={onToggle}
+              onToggleNote={onToggleNote}
               onDelete={onDelete}
             />
           ))}

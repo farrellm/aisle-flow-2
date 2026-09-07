@@ -122,6 +122,7 @@ func (h *handlers) updateItem(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name    *string         `json:"name"`
 		Checked *bool           `json:"checked"`
+		Note    *bool           `json:"note"`
 		Before  json.RawMessage `json:"before"`
 		After   json.RawMessage `json:"after"`
 	}
@@ -130,7 +131,7 @@ func (h *handlers) updateItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	params := store.UpdateParams{Checked: req.Checked}
+	params := store.UpdateParams{Checked: req.Checked, Note: req.Note}
 	if req.Name != nil {
 		name := strings.TrimSpace(*req.Name)
 		if name == "" {

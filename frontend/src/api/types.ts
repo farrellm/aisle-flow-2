@@ -3,6 +3,9 @@ export interface Item {
   listId: string // uuid
   name: string
   checked: boolean
+  // A reminder rather than something to buy ("skip the paprika") — pinned to
+  // the top of the list, never checked (§2, §3).
+  note: boolean
   position: number
   createdAt: string // RFC 3339
   updatedAt: string // RFC 3339
@@ -22,6 +25,7 @@ export interface ListInfo {
 export interface UpdatePatch {
   name?: string
   checked?: boolean
+  note?: boolean
   before?: string | null
   after?: string | null
 }
