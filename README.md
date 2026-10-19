@@ -150,7 +150,7 @@ app that deliberately has none.
 
 A **systemd user unit** (`~/.config/systemd/user/aisleflow.service`) owns the
 lifecycle: it starts the Postgres container, runs `backend/server` bound to
-`127.0.0.1:8090`, and publishes it with `tailscale serve --https=8443`. Run
+`127.0.0.1:8090`, and publishes it with `tailscale serve --https=8449`. Run
 `tailscale serve status` for the URL.
 
 ```bash
@@ -164,7 +164,7 @@ and HTTPS enabled for the tailnet in the Tailscale admin console (or
 `tailscale serve --https` can't get a certificate). The unit deliberately has no
 `After=docker.service` — a user manager can't order against system units — so it
 handles the boot race against `dockerd` by failing and retrying forever instead.
-See §9 for why the port is 8443 and not 443.
+See §9 for why the port is 8449 and not 443.
 
 ## Not in scope
 

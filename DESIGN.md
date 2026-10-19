@@ -450,8 +450,8 @@ Environment=LISTEN_ADDR=127.0.0.1:8090
 Environment=DATABASE_URL=postgres://aisleflow:aisleflow@localhost:5434/aisleflow?sslmode=disable
 ExecStartPre=/usr/bin/docker compose -f %h/…/docker-compose.yml up -d --wait db
 ExecStart=%h/…/backend/server
-ExecStartPost=/usr/bin/tailscale serve --bg --https=8443 http://127.0.0.1:8090
-ExecStopPost=-/usr/bin/tailscale serve --https=8443 off
+ExecStartPost=/usr/bin/tailscale serve --bg --https=8449 http://127.0.0.1:8090
+ExecStopPost=-/usr/bin/tailscale serve --https=8449 off
 Restart=always
 RestartSec=10
 
@@ -474,7 +474,7 @@ Points that are load-bearing rather than incidental:
 - **The serve port is not necessarily 443.** Any process bound to the wildcard `0.0.0.0:443` also
   owns the node's tailnet IPv4 address, and beats tailscaled to it — on a host already running a
   web server, `tailscale serve --https=443` silently ends up bound only to the tailnet *IPv6*
-  address and the name appears to serve the wrong certificate. Picking a free port (8443) sidesteps
+  address and the name appears to serve the wrong certificate. Picking a free port (8449) sidesteps
   the collision, and a non-443 HTTPS origin is still a secure context, so nothing in §13 cares.
 - `tailscale serve --bg` persists in tailscaled's own state and would survive a reboot unaided;
   re-applying it from `ExecStartPost` is idempotent and keeps the unit the single description of how
